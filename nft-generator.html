@@ -494,7 +494,9 @@ body.laeuft #ebenenListe, body.laeuft #btnNeueEbene {
         Gesichter, Accessoires und Kleidung von selbst an die passende Stelle in passender
         Größe — die Regler sind nur noch zur Feinkorrektur da (<b>50/50 = Auto-Position</b>).
         Transparente Ränder werden beim Hochladen automatisch weggeschnitten — die
-        Original-Dateigröße ist egal.
+        Original-Dateigröße ist egal. Tipp: Am besten funktioniert die Erkennung bei
+        Figuren mit freiem Kopf; bei bereits aufgemalten Hüten einfach kurz mit den
+        Reglern nachjustieren.
       </p>
     </div>
   </div>
@@ -603,9 +605,11 @@ const ATA_PROGRAMM_ID   = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 const ROLLEN_ERKENNUNG = [
   { rolle: "hintergrund", woerter: ["hintergrund", "background", "kulisse", "szene", "bg"] },
   { rolle: "figur",       woerter: ["männchen", "maennchen", "körper", "koerper", "body", "charakter", "character", "figur"] },
-  { rolle: "hut",         woerter: ["hut", "hat", "mütze", "muetze", "kappe", "cap", "krone", "crown", "helm", "kopf"] },
+  { rolle: "hut",         woerter: ["hut", "hat", "mütze", "muetze", "kappe", "cap", "krone", "crown", "helm", "kopfbedeckung"] },
   { rolle: "brille",      woerter: ["brille", "glasses", "sonnenbrille", "sunglasses", "monokel"] },
-  { rolle: "gesicht",     woerter: ["gesicht", "grimasse", "face", "augen", "eyes", "mund", "mouth", "miene", "ausdruck"] },
+  // "kopf"/"head" gehört zu GESICHT (Kopfmitte): eine Ebene mit austauschbaren
+  // Köpfen soll den Kopf ÜBERDECKEN, nicht wie ein Hut oben aufsitzen
+  { rolle: "gesicht",     woerter: ["gesicht", "grimasse", "face", "augen", "eyes", "mund", "mouth", "miene", "ausdruck", "kopf", "köpfe", "koepfe", "head"] },
   { rolle: "kleidung",    woerter: ["kleid", "kleidung", "clothes", "clothing", "shirt", "hemd", "jacke", "jacket", "hose", "pants", "anzug", "suit", "outfit", "pulli", "pullover", "hoodie"] },
   { rolle: "accessoire",  woerter: ["accessoire", "accessory", "kette", "schmuck", "zubehör", "zubehoer", "item"] },
 ];
@@ -623,7 +627,7 @@ const ROLLEN_DEFAULTS = {
   brille:      { groesse: 95,  posX: 50, posY: 50 },  // Anker: Augenhöhe
   gesicht:     { groesse: 80,  posX: 50, posY: 50 },  // Anker: Kopfmitte
   accessoire:  { groesse: 90,  posX: 50, posY: 50 },  // Anker: Kinn/Hals
-  kleidung:    { groesse: 90,  posX: 50, posY: 50 },  // Anker: Rumpf (% der Figur-Breite)
+  kleidung:    { groesse: 220, posX: 50, posY: 50 },  // Anker: Rumpf (% der Kopf-Breite)
   sonstiges:   { groesse: 50,  posX: 50, posY: 50 },  // unbekannte Ebene: mittig
 };
 
@@ -803,77 +807,124 @@ function schneideTransparenzWeg(img) {
 function analysiereKopf(bild) {
   if (bild.kopf !== undefined) return bild.kopf; // Cache (auch null wird gecacht)
   let ergebnis = null;
+  let voruebergehend = false; // Ausnahmen (z. B. Speicherdruck) nicht dauerhaft cachen
   try {
     // Fürs Profil reicht eine verkleinerte Kopie (max. 200 px) — schnell & glatt
     const faktor = Math.min(1, 200 / Math.max(bild.breite, bild.hoehe));
     const b = Math.max(1, Math.round(bild.breite * faktor));
     const h = Math.max(1, Math.round(bild.hoehe * faktor));
-    const c = document.createElement("canvas");
-    c.width = b; c.height = h;
-    const ctx = c.getContext("2d", { willReadFrequently: true });
-    ctx.drawImage(bild.canvas, 0, 0, b, h);
-    const daten = ctx.getImageData(0, 0, b, h).data;
 
-    // Zeilenprofil: Breite, Ränder und Schwerpunkt der deckenden Pixel je Zeile
-    const zeilen = [];
-    for (let y = 0; y < h; y++) {
-      let minX = -1, maxX = -1, summe = 0, n = 0;
-      for (let x = 0; x < b; x++) {
-        if (daten[(y * b + x) * 4 + 3] > 8) {
-          if (minX < 0) minX = x;
-          maxX = x; summe += x; n++;
+    // Winzige Bilder haben keinen sinnvoll erkennbaren Kopf
+    if (b >= 4 && h >= 12) {
+      const c = document.createElement("canvas");
+      c.width = b; c.height = h;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(bild.canvas, 0, 0, b, h);
+      const daten = ctx.getImageData(0, 0, b, h).data;
+
+      // Zeilenprofil: Breite, Ränder und Schwerpunkt der deckenden Pixel je Zeile
+      const zeilen = [];
+      for (let y = 0; y < h; y++) {
+        let minX = -1, maxX = -1, summe = 0, n = 0;
+        for (let x = 0; x < b; x++) {
+          if (daten[(y * b + x) * 4 + 3] > 8) {
+            if (minX < 0) minX = x;
+            maxX = x; summe += x; n++;
+          }
         }
+        zeilen.push({ breite: n ? maxX - minX + 1 : 0, minX, maxX, mitte: n ? summe / n : b / 2, n });
       }
-      zeilen.push({ breite: n ? maxX - minX + 1 : 0, minX, maxX, mitte: n ? summe / n : b / 2, n });
-    }
 
-    // Geglättetes Breitenprofil (gleitender Mittelwert über 5 Zeilen)
-    const W = zeilen.map((_, y) => {
-      let s = 0, n = 0;
-      for (let k = Math.max(0, y - 2); k <= Math.min(h - 1, y + 2); k++) { s += zeilen[k].breite; n++; }
-      return s / n;
-    });
+      // Geglättetes Breitenprofil (gleitender Mittelwert über 5 Zeilen)
+      const W = zeilen.map((_, y) => {
+        let s = 0, n = 0;
+        for (let k = Math.max(0, y - 2); k <= Math.min(h - 1, y + 2); k++) { s += zeilen[k].breite; n++; }
+        return s / n;
+      });
 
-    // Referenzbreite des Kopfes: breiteste Stelle im oberen Viertel
-    const suchStart = Math.max(2, Math.round(h * 0.25));
-    let refBreite = 1;
-    for (let y = 0; y < suchStart; y++) refBreite = Math.max(refBreite, W[y]);
+      // Schritt 1 — Kopf-Region über das LAUFENDE Breiten-Maximum suchen:
+      // Von oben nach unten wandern; sobald die Silhouette gegenüber dem
+      // bisher Breitesten deutlich schmaler wird (Hals) oder deutlich
+      // breiter (Schultern), endet der Kopf. Das laufende Maximum macht
+      // die Erkennung unabhängig davon, WO der Kopf am breitesten ist —
+      // auch kleine Köpfe (< 25 % der Figur-Höhe) werden so gefunden.
+      // Entpuppt sich die gefundene Region als dünner, hochkantiger
+      // AUFSATZ (Antenne, erhobener Arm) mit etwas viel Breiterem darunter,
+      // wird die Suche direkt darunter wiederholt (max. 3 Runden).
+      let oben = 0;
+      let unten = Math.round(h * 0.32);
+      for (let runde = 0; runde < 3; runde++) {
+        let bisherMax = 0;
+        unten = Math.min(oben + Math.round(h * 0.32), Math.round(h * 0.55)); // Fallback dieser Runde
+        const startZeile = oben + Math.max(2, Math.round(h * 0.04));
+        for (let y = oben; y < h * 0.6; y++) {
+          // Erst prüfen, wenn schon eine plausible Kopf-Breite gesehen wurde
+          if (y >= startZeile && bisherMax >= Math.max(3, b * 0.04)) {
+            if (W[y] < bisherMax * 0.72 || W[y] > bisherMax * 1.45) { unten = y; break; }
+          }
+          if (W[y] > bisherMax) bisherMax = W[y];
+        }
+        unten = Math.max(oben + 2, Math.min(Math.round(h * 0.55), unten));
 
-    // Kopf-Unterkante: Hals (deutlich schmaler) oder Schultern (deutlich
-    // breiter) zwischen 25 % und 60 % der Höhe; sonst Faustregel 32 %
-    let unten = Math.round(h * 0.32);
-    for (let y = suchStart; y < h * 0.6; y++) {
-      if (W[y] < refBreite * 0.72 || W[y] > refBreite * 1.45) { unten = y; break; }
-    }
-    // Plausibel halten: Kopf zwischen 12 % und 55 % der Figur-Höhe
-    unten = Math.max(Math.round(h * 0.12), Math.min(Math.round(h * 0.55), unten));
+        // Aufsatz-Prüfung: sehr schmale, hochkantige Region + deutlich
+        // breitere Silhouette direkt darunter → kein Kopf, sondern Aufsatz
+        let regionMax = 1, regionSumme = 0;
+        for (let y = oben; y < unten; y++) { if (W[y] > regionMax) regionMax = W[y]; regionSumme += W[y]; }
+        const mittlereBreite = Math.max(1, regionSumme / (unten - oben));
+        let drunterMax = 0;
+        for (let y = unten; y < Math.min(h, unten + Math.round(h * 0.15)); y++) {
+          if (W[y] > drunterMax) drunterMax = W[y];
+        }
+        const hochkant = (unten - oben) / mittlereBreite > 2.5;
+        if (hochkant && drunterMax > regionMax * 1.8 && unten < h * 0.5) {
+          oben = unten; // Aufsatz überspringen, direkt darunter weitersuchen
+          continue;
+        }
+        break;
+      }
 
-    // Kopf-Box über die Kopfzeilen; Mitte = gewichteter Schwerpunkt
-    let minX = b, maxX = -1, schwerpunkt = 0, gewicht = 0;
-    for (let y = 0; y < unten; y++) {
-      const z = zeilen[y];
-      if (!z.n) continue;
-      if (z.minX < minX) minX = z.minX;
-      if (z.maxX > maxX) maxX = z.maxX;
-      schwerpunkt += z.mitte * z.n;
-      gewicht += z.n;
-    }
-    const kopfBreite = maxX - minX + 1;
-    // Nur akzeptieren, wenn die Region plausibel ist (sonst greift die
-    // synthetische Standard-Kopf-Box beim Rendern)
-    if (gewicht > 0 && kopfBreite >= b * 0.1) {
-      ergebnis = {
-        x: minX / b,
-        y: 0,                       // Zuschnitt-Oberkante = Kopf-Oberkante
-        b: kopfBreite / b,
-        h: unten / h,
-        mitteX: (schwerpunkt / gewicht) / b,
-      };
+      // Schritt 2 — Kopf-OBERKANTE verfeinern: verbleibende dünne Spitzen
+      // überspringen. Die Oberkante ist die erste Zeile der Region, die
+      // mindestens 45 % der Kopf-Breite erreicht.
+      let wMax = 1;
+      for (let y = oben; y < unten; y++) if (W[y] > wMax) wMax = W[y];
+      for (let y = oben; y < unten; y++) {
+        if (W[y] >= wMax * 0.45) { oben = y; break; }
+      }
+      // Mindesthöhe des Kopfes sicherstellen
+      if (unten - oben < h * 0.08) {
+        unten = Math.min(h, oben + Math.max(2, Math.round(h * 0.08)));
+      }
+
+      // Schritt 3 — Kopf-Box & Schwerpunkt über die Kopfzeilen
+      let minX = b, maxX = -1, schwerpunkt = 0, gewicht = 0;
+      for (let y = oben; y < unten; y++) {
+        const z = zeilen[y];
+        if (!z.n) continue;
+        if (z.minX < minX) minX = z.minX;
+        if (z.maxX > maxX) maxX = z.maxX;
+        schwerpunkt += z.mitte * z.n;
+        gewicht += z.n;
+      }
+      const kopfBreite = maxX - minX + 1;
+      // Plausibilität: auch schmale Köpfe akzeptieren (z. B. Figur mit
+      // ausgebreiteten Flügeln/Armen, deren Box sehr breit ist) — erst
+      // unter ~4 % der Bildbreite greift die synthetische Fallback-Box
+      if (gewicht > 0 && kopfBreite >= Math.max(3, b * 0.04)) {
+        ergebnis = {
+          x: minX / b,
+          y: oben / h,
+          b: kopfBreite / b,
+          h: (unten - oben) / h,
+          mitteX: (schwerpunkt / gewicht) / b,
+        };
+      }
     }
   } catch (fehler) {
-    console.warn("Kopf-Analyse fehlgeschlagen:", fehler);
+    console.warn("Kopf-Analyse fehlgeschlagen (wird erneut versucht):", fehler);
+    voruebergehend = true;
   }
-  bild.kopf = ergebnis;
+  if (!voruebergehend) bild.kopf = ergebnis; // null = „kein Kopf" ist endgültig
   return ergebnis;
 }
 
@@ -1021,8 +1072,10 @@ function renderKombination(ctx, groesse, auswahl) {
     } else if (ebene.rolle === "kleidung") {
       // Kleidung: automatisch am Rumpf verankert — unterhalb des erkannten
       // Kopfes, horizontal an der Kopf-Mitte ausgerichtet.
-      // Größe = % der Figur-Breite (Kleidung spannt über den Körper).
-      const b = refBox.b * (ebene.groesse / 100);
+      // Größe = % der KOPF-Breite (Standard 220 % ≈ Schulterbreite) — so
+      // passt sie auch bei Figuren mit ausgestreckten Armen/Flügeln, deren
+      // Gesamt-Box viel breiter ist als der Rumpf.
+      const b = kopf.b * (ebene.groesse / 100);
       const h = b * (bild.hoehe / bild.breite);
       const kinnY = kopf.y + kopf.h;
       const rumpfMitteY = kinnY + (refBox.y + refBox.h - kinnY) * 0.35;
@@ -1145,7 +1198,7 @@ function zeichneEbenenListe() {
       </div>
       <div class="regler-zeile">
         <span>Größe %</span>
-        <input type="range" class="rg-groesse" min="5" max="200" value="${ebene.groesse}" aria-label="Größe in Prozent">
+        <input type="range" class="rg-groesse" min="5" max="300" value="${ebene.groesse}" aria-label="Größe in Prozent">
         <output>${ebene.groesse}</output>
       </div>
       <div class="regler-zeile">
