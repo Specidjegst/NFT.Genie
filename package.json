@@ -1,0 +1,12 @@
+{
+  "name": "nft-genie",
+  "version": "1.0.0",
+  "description": "NFT-Kollektions-Generator (Einzeldatei-Web-App) mit Mini-Server für Railway",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
