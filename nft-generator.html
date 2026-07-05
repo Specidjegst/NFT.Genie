@@ -489,9 +489,12 @@ body.laeuft #ebenenListe, body.laeuft #btnNeueEbene {
       <button class="btn-neutral btn-breit" id="btnNeueEbene">＋ Neue Ebene hinzufügen</button>
       <p class="hinweis">
         💡 Die Ebene mit einem Namen wie <code>Männchen</code>, <code>Body</code> oder
-        <code>Charakter</code> ist die <b>Referenz-Figur</b>. Hüte, Gesichter und Accessoires
-        werden automatisch relativ zu ihr skaliert und positioniert. Transparente Ränder
-        werden beim Hochladen automatisch weggeschnitten — die Original-Dateigröße ist egal.
+        <code>Charakter</code> ist die <b>Referenz-Figur</b>. Der Generator erkennt an ihr
+        automatisch die <b>Kopf-Region</b> (per Silhouetten-Analyse) und setzt Hüte, Brillen,
+        Gesichter, Accessoires und Kleidung von selbst an die passende Stelle in passender
+        Größe — die Regler sind nur noch zur Feinkorrektur da (<b>50/50 = Auto-Position</b>).
+        Transparente Ränder werden beim Hochladen automatisch weggeschnitten — die
+        Original-Dateigröße ist egal.
       </p>
     </div>
   </div>
@@ -601,21 +604,31 @@ const ROLLEN_ERKENNUNG = [
   { rolle: "hintergrund", woerter: ["hintergrund", "background", "kulisse", "szene", "bg"] },
   { rolle: "figur",       woerter: ["männchen", "maennchen", "körper", "koerper", "body", "charakter", "character", "figur"] },
   { rolle: "hut",         woerter: ["hut", "hat", "mütze", "muetze", "kappe", "cap", "krone", "crown", "helm", "kopf"] },
+  { rolle: "brille",      woerter: ["brille", "glasses", "sonnenbrille", "sunglasses", "monokel"] },
   { rolle: "gesicht",     woerter: ["gesicht", "grimasse", "face", "augen", "eyes", "mund", "mouth", "miene", "ausdruck"] },
-  { rolle: "accessoire",  woerter: ["brille", "glasses", "accessoire", "accessory", "kette", "schmuck", "zubehör", "zubehoer", "item"] },
+  { rolle: "kleidung",    woerter: ["kleid", "kleidung", "clothes", "clothing", "shirt", "hemd", "jacke", "jacket", "hose", "pants", "anzug", "suit", "outfit", "pulli", "pullover", "hoodie"] },
+  { rolle: "accessoire",  woerter: ["accessoire", "accessory", "kette", "schmuck", "zubehör", "zubehoer", "item"] },
 ];
 
-// Auto-Defaults je Rolle:
-//   groesse = Breite in % (Figur: % der Canvas-Breite, alle anderen: % der Figur-Breite)
-//   posX/posY = Ankerpunkt (Mitte des Bildes) in % (Figur: der Canvas, andere: der Figur-Box)
+// Auto-Defaults je Rolle.
+// Kopf-verankerte Rollen (Hut/Brille/Gesicht/Accessoire): Der Generator
+// erkennt die Kopf-Region der Figur automatisch aus der Alpha-Silhouette
+// (siehe analysiereKopf). groesse = % der erkannten KOPF-Breite,
+// posX/posY = Feinkorrektur, wobei 50/50 = exakt die Auto-Position.
+// Figur: groesse = % der Canvas-Breite, posX/posY = % des Canvas.
 const ROLLEN_DEFAULTS = {
   hintergrund: { groesse: 100, posX: 50, posY: 50 },  // füllt die Fläche (cover)
   figur:       { groesse: 80,  posX: 50, posY: 55 },  // Referenz-Figur, mittig
-  hut:         { groesse: 70,  posX: 50, posY: 8  },  // 70 % der Figur-Breite, oben am Kopf
-  gesicht:     { groesse: 48,  posX: 50, posY: 20 },  // 48 % der Breite, im Kopfbereich
-  accessoire:  { groesse: 45,  posX: 50, posY: 25 },  // 45 %, Gesichtsbereich
+  hut:         { groesse: 110, posX: 50, posY: 50 },  // Anker: Oberkante Kopf
+  brille:      { groesse: 95,  posX: 50, posY: 50 },  // Anker: Augenhöhe
+  gesicht:     { groesse: 80,  posX: 50, posY: 50 },  // Anker: Kopfmitte
+  accessoire:  { groesse: 90,  posX: 50, posY: 50 },  // Anker: Kinn/Hals
+  kleidung:    { groesse: 90,  posX: 50, posY: 50 },  // Anker: Rumpf (% der Figur-Breite)
   sonstiges:   { groesse: 50,  posX: 50, posY: 50 },  // unbekannte Ebene: mittig
 };
+
+// Vertikaler Ankerpunkt je Kopf-Rolle (0 = Kopf-Oberkante, 1 = Kinn)
+const KOPF_ANKER = { hut: 0.0, brille: 0.42, gesicht: 0.5, accessoire: 1.0 };
 
 /* ================================================================
    GLOBALER ZUSTAND
@@ -779,6 +792,91 @@ function schneideTransparenzWeg(img) {
   return zugeschnitten;
 }
 
+/**
+ * Erkennt die Kopf-Region einer Figur automatisch aus der Alpha-Silhouette.
+ * Idee: Das Zeilenprofil (deckende Breite pro Zeile) verrät, wo der Kopf
+ * endet — entweder wird die Silhouette deutlich schmaler (Hals) oder
+ * deutlich breiter (Schultern). Ergebnis wird am Bild gecacht.
+ * Rückgabe: { x, y, b, h, mitteX } als Anteile (0–1) des Bildes,
+ * oder null, wenn keine plausible Kopf-Region gefunden wurde.
+ */
+function analysiereKopf(bild) {
+  if (bild.kopf !== undefined) return bild.kopf; // Cache (auch null wird gecacht)
+  let ergebnis = null;
+  try {
+    // Fürs Profil reicht eine verkleinerte Kopie (max. 200 px) — schnell & glatt
+    const faktor = Math.min(1, 200 / Math.max(bild.breite, bild.hoehe));
+    const b = Math.max(1, Math.round(bild.breite * faktor));
+    const h = Math.max(1, Math.round(bild.hoehe * faktor));
+    const c = document.createElement("canvas");
+    c.width = b; c.height = h;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(bild.canvas, 0, 0, b, h);
+    const daten = ctx.getImageData(0, 0, b, h).data;
+
+    // Zeilenprofil: Breite, Ränder und Schwerpunkt der deckenden Pixel je Zeile
+    const zeilen = [];
+    for (let y = 0; y < h; y++) {
+      let minX = -1, maxX = -1, summe = 0, n = 0;
+      for (let x = 0; x < b; x++) {
+        if (daten[(y * b + x) * 4 + 3] > 8) {
+          if (minX < 0) minX = x;
+          maxX = x; summe += x; n++;
+        }
+      }
+      zeilen.push({ breite: n ? maxX - minX + 1 : 0, minX, maxX, mitte: n ? summe / n : b / 2, n });
+    }
+
+    // Geglättetes Breitenprofil (gleitender Mittelwert über 5 Zeilen)
+    const W = zeilen.map((_, y) => {
+      let s = 0, n = 0;
+      for (let k = Math.max(0, y - 2); k <= Math.min(h - 1, y + 2); k++) { s += zeilen[k].breite; n++; }
+      return s / n;
+    });
+
+    // Referenzbreite des Kopfes: breiteste Stelle im oberen Viertel
+    const suchStart = Math.max(2, Math.round(h * 0.25));
+    let refBreite = 1;
+    for (let y = 0; y < suchStart; y++) refBreite = Math.max(refBreite, W[y]);
+
+    // Kopf-Unterkante: Hals (deutlich schmaler) oder Schultern (deutlich
+    // breiter) zwischen 25 % und 60 % der Höhe; sonst Faustregel 32 %
+    let unten = Math.round(h * 0.32);
+    for (let y = suchStart; y < h * 0.6; y++) {
+      if (W[y] < refBreite * 0.72 || W[y] > refBreite * 1.45) { unten = y; break; }
+    }
+    // Plausibel halten: Kopf zwischen 12 % und 55 % der Figur-Höhe
+    unten = Math.max(Math.round(h * 0.12), Math.min(Math.round(h * 0.55), unten));
+
+    // Kopf-Box über die Kopfzeilen; Mitte = gewichteter Schwerpunkt
+    let minX = b, maxX = -1, schwerpunkt = 0, gewicht = 0;
+    for (let y = 0; y < unten; y++) {
+      const z = zeilen[y];
+      if (!z.n) continue;
+      if (z.minX < minX) minX = z.minX;
+      if (z.maxX > maxX) maxX = z.maxX;
+      schwerpunkt += z.mitte * z.n;
+      gewicht += z.n;
+    }
+    const kopfBreite = maxX - minX + 1;
+    // Nur akzeptieren, wenn die Region plausibel ist (sonst greift die
+    // synthetische Standard-Kopf-Box beim Rendern)
+    if (gewicht > 0 && kopfBreite >= b * 0.1) {
+      ergebnis = {
+        x: minX / b,
+        y: 0,                       // Zuschnitt-Oberkante = Kopf-Oberkante
+        b: kopfBreite / b,
+        h: unten / h,
+        mitteX: (schwerpunkt / gewicht) / b,
+      };
+    }
+  } catch (fehler) {
+    console.warn("Kopf-Analyse fehlgeschlagen:", fehler);
+  }
+  bild.kopf = ergebnis;
+  return ergebnis;
+}
+
 // Kleines Vorschaubild (Thumbnail) als Daten-URL erzeugen
 function erzeugeThumb(canvas, groesse = 120) {
   const t = document.createElement("canvas");
@@ -860,14 +958,38 @@ function berechneReferenzBox(groesse, auswahl) {
   return { x: groesse * 0.1, y: groesse * 0.15, b: groesse * 0.8, h: groesse * 0.7 };
 }
 
+// Kopf-Box in Canvas-Koordinaten: nutzt die automatisch erkannte
+// Kopf-Region der aktuell ausgewählten Figur. Gibt es keine (keine Figur,
+// Analyse fehlgeschlagen), dient eine synthetische Kopf-Box als Fallback
+// (mittleres oberes Drittel der Figur-Box).
+function ermittleKopfBox(auswahl, refBox) {
+  const ref = findeReferenzEbene();
+  let k = null;
+  if (ref) {
+    const idx = auswahl[ebenen.indexOf(ref)];
+    if (idx >= 0 && ref.bilder[idx]) k = analysiereKopf(ref.bilder[idx]);
+  }
+  if (!k) k = { x: 0.275, y: 0, b: 0.45, h: 0.3, mitteX: 0.5 }; // synthetischer Kopf
+  return {
+    x: refBox.x + refBox.b * k.x,
+    y: refBox.y + refBox.h * k.y,
+    b: refBox.b * k.b,
+    h: refBox.h * k.h,
+    mitteX: refBox.x + refBox.b * k.mitteX,
+  };
+}
+
 // Die eigentliche Zeichenfunktion
 function renderKombination(ctx, groesse, auswahl) {
   ctx.clearRect(0, 0, groesse, groesse);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
 
-  // Referenz-Box vorab berechnen (unabhängig von der Zeichen-Reihenfolge)
+  // Referenz-Box und Kopf-Box vorab berechnen (unabhängig von der
+  // Zeichen-Reihenfolge) — die Kopf-Box stammt aus der automatischen
+  // Silhouetten-Analyse der aktuell ausgewählten Figur
   const refBox = berechneReferenzBox(groesse, auswahl);
+  const kopf = ermittleKopfBox(auswahl, refBox);
   const refEbene = findeReferenzEbene();
 
   ebenen.forEach((ebene, ei) => {
@@ -885,9 +1007,30 @@ function renderKombination(ctx, groesse, auswahl) {
     } else if (ebene === refEbene) {
       // Referenz-Figur: Größe/Position relativ zum Canvas
       ctx.drawImage(bild.canvas, refBox.x, refBox.y, refBox.b, refBox.h);
+    } else if (ebene.rolle in KOPF_ANKER) {
+      // Kopf-verankerte Ebenen (Hut/Brille/Gesicht/Accessoire):
+      // Größe = % der erkannten KOPF-Breite, Position = automatischer
+      // Ankerpunkt am Kopf; die Regler verschieben nur noch relativ dazu
+      // (50/50 = exakt die Auto-Position). Ein riesiger Hut wird so
+      // automatisch passend verkleinert UND mittig auf den Kopf gesetzt.
+      const b = kopf.b * (ebene.groesse / 100);
+      const h = b * (bild.hoehe / bild.breite);
+      const mitteX = kopf.mitteX + ((ebene.posX - 50) / 100) * refBox.b;
+      const mitteY = kopf.y + kopf.h * KOPF_ANKER[ebene.rolle] + ((ebene.posY - 50) / 100) * refBox.h;
+      ctx.drawImage(bild.canvas, mitteX - b / 2, mitteY - h / 2, b, h);
+    } else if (ebene.rolle === "kleidung") {
+      // Kleidung: automatisch am Rumpf verankert — unterhalb des erkannten
+      // Kopfes, horizontal an der Kopf-Mitte ausgerichtet.
+      // Größe = % der Figur-Breite (Kleidung spannt über den Körper).
+      const b = refBox.b * (ebene.groesse / 100);
+      const h = b * (bild.hoehe / bild.breite);
+      const kinnY = kopf.y + kopf.h;
+      const rumpfMitteY = kinnY + (refBox.y + refBox.h - kinnY) * 0.35;
+      const mitteX = kopf.mitteX + ((ebene.posX - 50) / 100) * refBox.b;
+      const mitteY = rumpfMitteY + ((ebene.posY - 50) / 100) * refBox.h;
+      ctx.drawImage(bild.canvas, mitteX - b / 2, mitteY - h / 2, b, h);
     } else {
-      // Alle anderen Ebenen: relativ zur Referenz-Figur skaliert & positioniert.
-      // Ein riesiger Hut wird so automatisch passend verkleinert.
+      // Unbekannte Ebenen: relativ zur Figur-Box skaliert & positioniert
       const b = refBox.b * (ebene.groesse / 100);
       const h = b * (bild.hoehe / bild.breite);
       const mitteX = refBox.x + refBox.b * (ebene.posX / 100);
@@ -971,9 +1114,11 @@ const ebenenListe = document.getElementById("ebenenListe");
 const ROLLEN_LABEL = {
   hintergrund: "Hintergrund (füllt Fläche)",
   figur: "★ Referenz-Figur",
-  hut: "Hut → oben am Kopf",
-  gesicht: "Gesicht → Kopfbereich",
-  accessoire: "Accessoire",
+  hut: "Hut → auto: oben am Kopf",
+  brille: "Brille → auto: Augenhöhe",
+  gesicht: "Gesicht → auto: Kopfmitte",
+  accessoire: "Accessoire → auto: Kinn/Hals",
+  kleidung: "Kleidung → auto: Rumpf",
   sonstiges: "Frei positioniert",
 };
 
