@@ -875,8 +875,14 @@ function analysiereKopf(bild) {
         for (let y = unten; y < Math.min(h, unten + Math.round(h * 0.15)); y++) {
           if (W[y] > drunterMax) drunterMax = W[y];
         }
-        const hochkant = (unten - oben) / mittlereBreite > 2.5;
-        if (hochkant && drunterMax > regionMax * 1.8 && unten < h * 0.5) {
+        // Ein Aufsatz ist entweder hochkant (Antenne, Arm) ODER viel zu
+        // niedrig für einen Kopf (z. B. die Kugel einer Roboter-Antenne,
+        // die mit ihrem Stab einen Mini-Kopf samt Hals vortäuscht).
+        // Echte Köpfe sind rundlich (Seitenverhältnis ≈ 0,8–1,3) —
+        // ab 1,6 ist die Region sicher ein Stab/Arm, kein Kopf.
+        const hochkant = (unten - oben) / mittlereBreite > 1.6;
+        const zuNiedrig = (unten - oben) < h * 0.08;
+        if ((hochkant || zuNiedrig) && drunterMax > regionMax * 1.8 && unten < h * 0.5) {
           oben = unten; // Aufsatz überspringen, direkt darunter weitersuchen
           continue;
         }
@@ -1072,7 +1078,9 @@ function renderKombination(ctx, groesse, auswahl) {
       // Ankerpunkt am Kopf; die Regler verschieben nur noch relativ dazu
       // (50/50 = exakt die Auto-Position). Ein riesiger Hut wird so
       // automatisch passend verkleinert UND mittig auf den Kopf gesetzt.
-      const b = kopf.b * (ebene.groesse / 100);
+      // Bei halslosen Figuren (Kopf = ganzer Körper, z. B. Blob/Geist)
+      // wird die Breite sanft gedeckelt, damit kein „Lampenschirm" entsteht.
+      const b = Math.min(kopf.b * (ebene.groesse / 100), refBox.b * 0.8 * (ebene.groesse / 100));
       const h = b * (bild.hoehe / bild.breite);
       const mitteX = kopf.mitteX + ((ebene.posX - 50) / 100) * refBox.b;
       let mitteY;
