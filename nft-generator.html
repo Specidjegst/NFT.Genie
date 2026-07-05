@@ -1527,7 +1527,8 @@ async function starteGenerierung() {
 
     // DNA-Verwaltung: jede Kombination nur einmal (Set verhindert Duplikate)
     const benutzteDna = new Set();
-    let aufzaehlung = null; // Fallback-Liste, wird nur bei Bedarf erzeugt
+    let aufzaehlung = null;   // Fallback-Liste, wird nur bei Bedarf erzeugt
+    let unvollstaendig = false; // true, wenn die DNA-Suche vorzeitig aufgeben musste
     const MAX_VERSUCHE = 3000;
 
     for (let nr = 1; nr <= anzahl; nr++) {
@@ -1554,7 +1555,7 @@ async function starteGenerierung() {
           if (auswahl) benutzteDna.add(auswahl.join("-"));
         }
         if (!auswahl) {
-          setzeStatus(`Konnte nach NFT ${nr - 1} keine weitere einzigartige Kombination finden — Export enthält ${nr - 1} NFTs.`, "fehler");
+          unvollstaendig = true; // Abschluss-Meldung unten weist darauf hin
           break;
         }
       }
@@ -1609,7 +1610,12 @@ async function starteGenerierung() {
     };
 
     setzeFortschritt(100);
-    setzeStatus(`✅ Fertig! ${formatZahl(benutzteDna.size)} NFTs generiert und als „${dateiname}" exportiert.`, "erfolg");
+    if (unvollstaendig) {
+      // Ehrliche Meldung statt „Fertig": es wurden weniger NFTs erzeugt als angefordert
+      setzeStatus(`⚠️ Nur ${formatZahl(benutzteDna.size)} von ${formatZahl(anzahl)} NFTs generiert — es ließen sich keine weiteren einzigartigen Kombinationen finden. Das ZIP „${dateiname}" enthält die erzeugten NFTs.`, "fehler");
+    } else {
+      setzeStatus(`✅ Fertig! ${formatZahl(benutzteDna.size)} NFTs generiert und als „${dateiname}" exportiert.`, "erfolg");
+    }
   } catch (fehler) {
     console.error(fehler);
     setzeStatus("Fehler bei der Generierung: " + String(fehler?.message || fehler), "fehler");
