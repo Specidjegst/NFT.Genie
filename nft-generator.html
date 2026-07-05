@@ -996,8 +996,16 @@ function berechneReferenzBox(groesse, auswahl) {
     const idx = auswahl[ebenen.indexOf(ref)];
     if (idx >= 0) {
       const bild = ref.bilder[idx];
-      const b = groesse * (ref.groesse / 100);
-      const h = b * (bild.hoehe / bild.breite);
+      let b = groesse * (ref.groesse / 100);
+      let h = b * (bild.hoehe / bild.breite);
+      // Auto-Fit: sehr hohe (schmale) Figuren würden oben/unten aus dem
+      // Bild laufen → Höhe automatisch begrenzen (82 % des Canvas lässt
+      // Platz für Hüte über dem Kopf), Breite proportional mitschrumpfen
+      const maxHoehe = groesse * 0.82 * (ref.groesse / 80);
+      if (h > maxHoehe) {
+        h = maxHoehe;
+        b = h * (bild.breite / bild.hoehe);
+      }
       return {
         x: groesse * (ref.posX / 100) - b / 2,
         y: groesse * (ref.posY / 100) - h / 2,
@@ -1067,7 +1075,15 @@ function renderKombination(ctx, groesse, auswahl) {
       const b = kopf.b * (ebene.groesse / 100);
       const h = b * (bild.hoehe / bild.breite);
       const mitteX = kopf.mitteX + ((ebene.posX - 50) / 100) * refBox.b;
-      const mitteY = kopf.y + kopf.h * KOPF_ANKER[ebene.rolle] + ((ebene.posY - 50) / 100) * refBox.h;
+      let mitteY;
+      if (ebene.rolle === "hut") {
+        // Hut: die UNTERKANTE sitzt knapp im Kopf (22 % unter der
+        // Oberkante) — so ruht auch ein hoher Zylinder auf dem Schädel,
+        // statt mit halber Höhe die Augen zu verdecken
+        mitteY = kopf.y + kopf.h * 0.22 - h / 2 + ((ebene.posY - 50) / 100) * refBox.h;
+      } else {
+        mitteY = kopf.y + kopf.h * KOPF_ANKER[ebene.rolle] + ((ebene.posY - 50) / 100) * refBox.h;
+      }
       ctx.drawImage(bild.canvas, mitteX - b / 2, mitteY - h / 2, b, h);
     } else if (ebene.rolle === "kleidung") {
       // Kleidung: automatisch am Rumpf verankert — unterhalb des erkannten
