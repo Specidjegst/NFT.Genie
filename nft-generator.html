@@ -1,0 +1,1666 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFT-Kollektions-Generator</title>
+
+<!-- Erlaubte externe Bibliotheken (Internet nur beim ersten Laden nötig).
+     integrity-Hashes pinnen die exakten Datei-Bytes (Subresource Integrity) —
+     wichtig, weil diese Seite Wallet-Transaktionen signiert. -->
+<!-- JSZip: erstellt die ZIP-Datei mit Bildern + Metadaten -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+        integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg=="
+        crossorigin="anonymous"></script>
+<!-- Solana web3.js (IIFE-Bundle): Wallet-Verbindung + Token-Burn -->
+<script src="https://unpkg.com/@solana/web3.js@1.95.8/lib/index.iife.min.js"
+        integrity="sha384-ujeTtvHxhu2g5lnu14Roii2ajvVKJ74KQ6eo6GGfAi0IrKZ1YkF8N68Iw5VmIJO0"
+        crossorigin="anonymous"></script>
+
+<style>
+/* ============================================================
+   DESIGN: Modernes Dark-Theme (dunkles Blau-Grau)
+   Akzentfarben: Violett #7c5cff und Mint #00d4a0
+   ============================================================ */
+:root {
+  --bg:        #0e1220;   /* Seitenhintergrund */
+  --panel:     #161c2e;   /* Karten */
+  --panel-2:   #1d2540;   /* Karten-Innenflächen */
+  --border:    #2a3454;   /* Rahmen */
+  --text:      #e9edf8;   /* Haupttext */
+  --muted:     #8d97b5;   /* Nebentext */
+  --violet:    #7c5cff;   /* Akzent 1 */
+  --mint:      #00d4a0;   /* Akzent 2 */
+  --danger:    #ff5c7a;   /* Fehler / Löschen */
+  --warn:      #ffb347;   /* Warnungen */
+  --radius:    14px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background:
+    radial-gradient(1000px 500px at 85% -10%, rgba(124, 92, 255, .16), transparent 60%),
+    radial-gradient(800px 400px at -10% 20%, rgba(0, 212, 160, .10), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+h1, h2, h3 { font-weight: 700; }
+
+/* ---------- Kopfzeile ---------- */
+header {
+  max-width: 1400px;
+  margin: 0 auto 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+}
+.logo { display: flex; align-items: center; gap: 12px; }
+.logo-icon {
+  width: 46px; height: 46px;
+  border-radius: 13px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+  background: linear-gradient(135deg, var(--violet), var(--mint));
+  box-shadow: 0 6px 22px rgba(124, 92, 255, .45);
+}
+.logo h1 { font-size: 22px; }
+.logo p  { font-size: 12.5px; color: var(--muted); }
+
+/* ---------- Wallet-Bereich ---------- */
+.wallet-box {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+.wallet-info { font-size: 13px; color: var(--muted); text-align: right; }
+.wallet-info b { color: var(--mint); font-variant-numeric: tabular-nums; }
+.wallet-adresse { color: var(--text); font-family: monospace; font-size: 12px; }
+
+/* ---------- Banner (Test-Modus) ---------- */
+.banner {
+  max-width: 1400px;
+  margin: 0 auto 18px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 179, 71, .5);
+  background: rgba(255, 179, 71, .1);
+  color: var(--warn);
+  font-size: 13.5px;
+  display: none;
+}
+.banner.sichtbar { display: block; }
+
+/* ---------- Hauptraster: 2 Spalten, mobil 1 Spalte ---------- */
+.haupt {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .haupt { grid-template-columns: minmax(0, 1fr); }
+  body { padding: 12px; }
+}
+
+/* ---------- Karten ---------- */
+.karte {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin-bottom: 20px;
+}
+.karte h2 {
+  font-size: 16px;
+  margin-bottom: 14px;
+  display: flex; align-items: center; gap: 8px;
+}
+.karte h2 .punkt {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--violet), var(--mint));
+  display: inline-block;
+}
+
+/* ---------- Buttons ---------- */
+button {
+  font-family: inherit;
+  border: none;
+  cursor: pointer;
+  border-radius: 10px;
+  color: var(--text);
+  transition: filter .15s, transform .05s;
+}
+button:hover:not(:disabled) { filter: brightness(1.15); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn-primaer {
+  background: linear-gradient(135deg, var(--violet), #5a3de0);
+  padding: 11px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(124, 92, 255, .35);
+}
+.btn-mint {
+  background: linear-gradient(135deg, var(--mint), #00a87e);
+  color: #04281e;
+  padding: 11px 20px;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 4px 16px rgba(0, 212, 160, .3);
+}
+.btn-neutral {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  font-size: 13px;
+}
+.btn-klein {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  width: 28px; height: 28px;
+  font-size: 13px;
+  line-height: 1;
+}
+.btn-loeschen { color: var(--danger); }
+.btn-breit { width: 100%; }
+
+/* ---------- Ebenen-Karten ---------- */
+.ebene {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.ebene-kopf {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin-bottom: 10px;
+}
+.ebene-nr {
+  font-size: 11px; color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+.ebene-name {
+  flex: 1;
+  min-width: 120px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 7px 10px;
+}
+.ebene-name:focus { outline: 1px solid var(--violet); }
+.ebene-rolle {
+  font-size: 10.5px;
+  color: var(--mint);
+  border: 1px solid rgba(0, 212, 160, .4);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.ebene-rolle.referenz { color: var(--violet); border-color: rgba(124, 92, 255, .55); }
+
+.ebene-optionen {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  font-size: 12.5px; color: var(--muted);
+  margin-bottom: 10px;
+}
+.ebene-optionen label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+input[type="checkbox"] { accent-color: var(--violet); width: 15px; height: 15px; }
+
+/* ---------- Regler ---------- */
+.regler-zeile {
+  display: grid;
+  grid-template-columns: 82px 1fr 52px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.regler-zeile output { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 5px;
+  border-radius: 4px;
+  background: var(--border);
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--violet), var(--mint));
+  border: 2px solid #fff2;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--violet), var(--mint));
+  border: 2px solid #fff2;
+}
+
+/* ---------- Upload-Zone ---------- */
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+  margin: 10px 0;
+  transition: border-color .15s, background .15s;
+}
+.dropzone:hover, .dropzone.aktiv {
+  border-color: var(--violet);
+  background: rgba(124, 92, 255, .08);
+  color: var(--text);
+}
+
+/* ---------- Bild-Raster in Ebene ---------- */
+.bilder-raster {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+}
+.bild-karte {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  position: relative;
+}
+.bild-karte img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 6px;
+  background:
+    conic-gradient(#232a44 25%, #1a2036 0 50%, #232a44 0 75%, #1a2036 0) 0 0/14px 14px;
+}
+.bild-name {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 4px 0 2px;
+}
+.bild-gewicht {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  font-size: 10px; color: var(--muted);
+}
+.bild-gewicht input[type="range"] { flex: 1; min-width: 40px; height: 4px; }
+.bild-gewicht output {
+  flex-basis: 100%; text-align: right;
+  color: var(--mint); font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.bild-entfernen {
+  position: absolute;
+  top: 3px; right: 3px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: rgba(14, 18, 32, .85);
+  color: var(--danger);
+  font-size: 11px;
+  border: 1px solid var(--border);
+}
+
+/* ---------- Vorschau ---------- */
+#vorschauCanvas {
+  width: 100%;
+  max-width: 460px;
+  aspect-ratio: 1;
+  display: block;
+  margin: 0 auto 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background:
+    conic-gradient(#20273f 25%, #181e32 0 50%, #20273f 0 75%, #181e32 0) 0 0/22px 22px;
+}
+.kombo-info {
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 10px;
+}
+.kombo-info b { color: var(--mint); font-size: 15px; }
+.kombo-info.warnung b { color: var(--warn); }
+
+/* ---------- Formulare ---------- */
+.formular-raster {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 480px) {
+  .formular-raster { grid-template-columns: minmax(0, 1fr); }
+}
+.feld { display: flex; flex-direction: column; gap: 5px; }
+.feld.voll { grid-column: 1 / -1; }
+.feld label { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.feld input[type="text"], .feld input[type="number"], .feld textarea {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13.5px;
+  padding: 9px 11px;
+  width: 100%;
+}
+.feld textarea { resize: vertical; min-height: 60px; }
+.feld input:focus, .feld textarea:focus { outline: 1px solid var(--violet); }
+
+.schalter-zeile {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px;
+  padding: 9px 0;
+  cursor: pointer;
+}
+
+/* ---------- Kosten & Fortschritt ---------- */
+.kosten-box {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 14px 0;
+}
+.kosten-box b { color: var(--violet); font-size: 15px; }
+
+.fortschritt-huelle {
+  height: 12px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin-top: 14px;
+}
+.fortschritt-balken {
+  height: 100%;
+  width: 0%;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--violet), var(--mint));
+  transition: width .2s;
+}
+.status-text {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 8px;
+  min-height: 18px;
+}
+.status-text.fehler { color: var(--danger); }
+.status-text.erfolg { color: var(--mint); }
+
+/* ---------- NFT-Ergebnis-Raster ---------- */
+.nft-raster {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+.nft-raster img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.nft-raster .nft-nr {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  margin-top: 2px;
+}
+
+/* Während der Generierung: Ebenen-Bearbeitung sperren (sonst könnten
+   gelöschte Bilder die laufende Generierung nach dem Burn crashen) */
+body.laeuft #ebenenListe, body.laeuft #btnNeueEbene {
+  pointer-events: none;
+  opacity: .55;
+}
+
+.hinweis { font-size: 11.5px; color: var(--muted); line-height: 1.5; margin-top: 10px; }
+.hinweis code {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 10.5px;
+}
+</style>
+</head>
+<body>
+
+<!-- ============ KOPFZEILE ============ -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">🎨</div>
+    <div>
+      <h1>NFT-Kollektions-Generator</h1>
+      <p>Ebenen hochladen → mixen → als ZIP exportieren (ERC-721 / Solana)</p>
+    </div>
+  </div>
+  <div class="wallet-box">
+    <div class="wallet-info" id="walletInfo">Wallet nicht verbunden</div>
+    <button class="btn-primaer" id="btnWallet">Wallet verbinden</button>
+  </div>
+</header>
+
+<!-- Banner: sichtbar solange der Test-Modus aktiv ist -->
+<div class="banner" id="testBanner">
+  🧪 <b>Test-Modus aktiv:</b> Es ist noch keine Token-Mint-Adresse konfiguriert
+  (<code>CONFIG.TOKEN_MINT</code> oben im Script). Die Generierung ist kostenlos nutzbar —
+  es werden keine Tokens geburnt.
+</div>
+
+<div class="haupt">
+
+  <!-- ============ LINKE SPALTE: EBENEN ============ -->
+  <div>
+    <div class="karte">
+      <h2><span class="punkt"></span> Ebenen (oberste = ganz hinten)</h2>
+      <div id="ebenenListe"><!-- Ebenen-Karten werden per JavaScript eingefügt --></div>
+      <button class="btn-neutral btn-breit" id="btnNeueEbene">＋ Neue Ebene hinzufügen</button>
+      <p class="hinweis">
+        💡 Die Ebene mit einem Namen wie <code>Männchen</code>, <code>Body</code> oder
+        <code>Charakter</code> ist die <b>Referenz-Figur</b>. Hüte, Gesichter und Accessoires
+        werden automatisch relativ zu ihr skaliert und positioniert. Transparente Ränder
+        werden beim Hochladen automatisch weggeschnitten — die Original-Dateigröße ist egal.
+      </p>
+    </div>
+  </div>
+
+  <!-- ============ RECHTE SPALTE: VORSCHAU + GENERIERUNG ============ -->
+  <div>
+    <!-- Live-Vorschau -->
+    <div class="karte">
+      <h2><span class="punkt"></span> Live-Vorschau</h2>
+      <canvas id="vorschauCanvas" width="1000" height="1000" role="img" aria-label="Live-Vorschau der aktuellen NFT-Kombination"></canvas>
+      <button class="btn-primaer btn-breit" id="btnMischen">🎲 Zufällig mischen</button>
+      <div class="kombo-info" id="komboInfo">Mögliche einzigartige Kombinationen: <b>0</b></div>
+    </div>
+
+    <!-- Kollektions-Einstellungen + Export -->
+    <div class="karte">
+      <h2><span class="punkt"></span> Kollektion generieren</h2>
+
+      <div class="formular-raster">
+        <div class="feld">
+          <label for="inpName">Kollektionsname</label>
+          <input type="text" id="inpName" value="Meine Kollektion" maxlength="80">
+        </div>
+        <div class="feld">
+          <label for="inpAnzahl">Anzahl NFTs (1–5000)</label>
+          <input type="number" id="inpAnzahl" value="100" min="1" max="5000" step="1">
+        </div>
+        <div class="feld voll">
+          <label for="inpBeschreibung">Beschreibung</label>
+          <textarea id="inpBeschreibung">Eine einzigartige, automatisch generierte NFT-Kollektion.</textarea>
+        </div>
+        <div class="feld">
+          <label for="inpGroesse">Bildgröße in px (200–2000)</label>
+          <input type="number" id="inpGroesse" value="1000" min="200" max="2000" step="1">
+        </div>
+      </div>
+
+      <!-- Umschalter: ERC-721 oder Solana/Metaplex-Metadaten -->
+      <label class="schalter-zeile">
+        <input type="checkbox" id="chkMetaplex">
+        <span>Solana/Metaplex-Metadatenformat (für LaunchMyNFT, Candy Machine …)</span>
+      </label>
+      <div class="formular-raster" id="metaplexFelder" style="display:none">
+        <div class="feld">
+          <label for="inpSymbol">Symbol</label>
+          <input type="text" id="inpSymbol" value="NFT" maxlength="10">
+        </div>
+        <div class="feld">
+          <label for="inpRoyalty">Royalties in % (seller_fee_basis_points)</label>
+          <input type="number" id="inpRoyalty" value="5" min="0" max="50" step="0.1">
+        </div>
+      </div>
+
+      <!-- Kostenanzeige (Token-Burn) -->
+      <div class="kosten-box" id="kostenBox">Kosten werden berechnet …</div>
+
+      <button class="btn-mint btn-breit" id="btnGenerieren">🚀 Kollektion generieren &amp; ZIP exportieren</button>
+
+      <div class="fortschritt-huelle"><div class="fortschritt-balken" id="fortschrittBalken"></div></div>
+      <div class="status-text" id="statusText"></div>
+
+      <button class="btn-neutral btn-breit" id="btnDownload" style="display:none; margin-top:10px">⬇️ ZIP erneut herunterladen</button>
+
+      <div class="nft-raster" id="nftRaster"></div>
+
+      <p class="hinweis">
+        📦 Das ZIP enthält <code>bilder/1.png…N.png</code> und <code>metadaten/1.json…N.json</code>.
+        Im ERC-721-Format ist <code>ipfs://DEIN_CID_HIER/</code> ein Platzhalter — nach dem
+        IPFS-Upload deiner Bilder einfach durch deinen echten CID ersetzen.
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ================================================================
+   KONFIGURATION — hier deinen Pump.fun-Token eintragen!
+   Solange TOKEN_MINT der Platzhalter ist, läuft alles im
+   kostenlosen Test-Modus (Banner wird angezeigt).
+   ================================================================ */
+const CONFIG = {
+  // Mint-Adresse deines Pump.fun-Tokens (Base58), z. B. "6p6xgHy…pump"
+  TOKEN_MINT: "HIER_PUMPFUN_TOKEN_MINT_EINFUEGEN",
+  // Preis pro generiertem NFT in ganzen Tokens (UI-Einheiten)
+  PRICE_PER_NFT: 100,
+  // Dezimalstellen des Tokens (Pump.fun-Standard: 6)
+  TOKEN_DECIMALS: 6,
+  // RPC-Endpoint (eigener RPC empfohlen, z. B. Helius/QuickNode)
+  RPC_ENDPOINT: "https://api.mainnet-beta.solana.com",
+};
+
+// Test-Modus: aktiv, solange keine echte Mint-Adresse eingetragen wurde
+const TEST_MODUS = !CONFIG.TOKEN_MINT || CONFIG.TOKEN_MINT.startsWith("HIER_");
+
+// Feste Programm-Adressen des SPL-Token-Standards
+const TOKEN_PROGRAMM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const ATA_PROGRAMM_ID   = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+
+/* ================================================================
+   ROLLEN-ERKENNUNG
+   Anhand des Ebenen-Namens (deutsch + englisch) wird erkannt,
+   welche Funktion eine Ebene hat. Daraus ergeben sich die
+   Auto-Defaults für Größe & Position relativ zur Referenz-Figur.
+   ================================================================ */
+const ROLLEN_ERKENNUNG = [
+  { rolle: "hintergrund", woerter: ["hintergrund", "background", "kulisse", "szene", "bg"] },
+  { rolle: "figur",       woerter: ["männchen", "maennchen", "körper", "koerper", "body", "charakter", "character", "figur"] },
+  { rolle: "hut",         woerter: ["hut", "hat", "mütze", "muetze", "kappe", "cap", "krone", "crown", "helm", "kopf"] },
+  { rolle: "gesicht",     woerter: ["gesicht", "grimasse", "face", "augen", "eyes", "mund", "mouth", "miene", "ausdruck"] },
+  { rolle: "accessoire",  woerter: ["brille", "glasses", "accessoire", "accessory", "kette", "schmuck", "zubehör", "zubehoer", "item"] },
+];
+
+// Auto-Defaults je Rolle:
+//   groesse = Breite in % (Figur: % der Canvas-Breite, alle anderen: % der Figur-Breite)
+//   posX/posY = Ankerpunkt (Mitte des Bildes) in % (Figur: der Canvas, andere: der Figur-Box)
+const ROLLEN_DEFAULTS = {
+  hintergrund: { groesse: 100, posX: 50, posY: 50 },  // füllt die Fläche (cover)
+  figur:       { groesse: 80,  posX: 50, posY: 55 },  // Referenz-Figur, mittig
+  hut:         { groesse: 70,  posX: 50, posY: 8  },  // 70 % der Figur-Breite, oben am Kopf
+  gesicht:     { groesse: 48,  posX: 50, posY: 20 },  // 48 % der Breite, im Kopfbereich
+  accessoire:  { groesse: 45,  posX: 50, posY: 25 },  // 45 %, Gesichtsbereich
+  sonstiges:   { groesse: 50,  posX: 50, posY: 50 },  // unbekannte Ebene: mittig
+};
+
+/* ================================================================
+   GLOBALER ZUSTAND
+   ================================================================ */
+let ebenen = [];            // Alle Ebenen (Index 0 = ganz hinten gezeichnet)
+let ebenenZaehler = 0;      // Für eindeutige Ebenen-IDs
+let bildZaehler = 0;        // Für eindeutige Bild-IDs
+let letzteAuswahl = null;   // Zuletzt gemischte Kombination (für Live-Regler)
+let generierungLaeuft = false;
+let letzteZipUrl = null;    // Objekt-URL des letzten ZIP-Downloads
+
+// Wallet-Zustand
+const wallet = { provider: null, pubkey: null, verbindung: null, guthaben: null };
+
+/* ================================================================
+   HILFSFUNKTIONEN
+   ================================================================ */
+
+// HTML-Escaping — schützt vor XSS durch bösartige Dateinamen
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (z) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[z]));
+}
+
+// Kurze Pause, damit die UI nicht einfriert
+function pause(ms = 0) {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+// canvas.toBlob als Promise
+function canvasZuBlob(canvas) {
+  return new Promise((res, rej) => {
+    canvas.toBlob((blob) => (blob ? res(blob) : rej(new Error("toBlob fehlgeschlagen"))), "image/png");
+  });
+}
+
+// Dateiname ohne Endung (für Trait-Werte in den Metadaten)
+function ohneEndung(name) {
+  return name.replace(/\.[^.]+$/, "");
+}
+
+// Dateiname für das ZIP säubern (Fallback erst NACH dem Säubern,
+// damit z. B. "###" nicht zu einem leeren Namen führt)
+function sicherDateiname(name) {
+  const sauber = name.trim().replace(/[^\wäöüÄÖÜß\- ]+/g, "").replace(/\s+/g, "_");
+  return sauber || "kollektion";
+}
+
+// Zahl mit Tausenderpunkten formatieren
+function formatZahl(n) {
+  return n.toLocaleString("de-DE");
+}
+
+// Erkennt anhand des Namens die Rolle einer Ebene
+function erkenneRolle(name) {
+  const klein = name.toLowerCase();
+  for (const eintrag of ROLLEN_ERKENNUNG) {
+    if (eintrag.woerter.some((w) => klein.includes(w))) return eintrag.rolle;
+  }
+  return "sonstiges";
+}
+
+// Gewichtete Zufallsauswahl: optionen = [{ i, gewicht }] → gewählter Index i
+function gewichteteWahl(optionen) {
+  const gesamt = optionen.reduce((s, o) => s + o.gewicht, 0);
+  let los = Math.random() * gesamt;
+  for (const o of optionen) {
+    los -= o.gewicht;
+    if (los <= 0) return o.i;
+  }
+  return optionen[optionen.length - 1].i;
+}
+
+// Durchschnittsgewicht einer Ebene — damit verhält sich die Option
+// „Trait fehlt" wie ein durchschnittlich häufiges Bild
+function durchschnittsGewicht(ebene) {
+  if (!ebene.bilder.length) return 1;
+  return ebene.bilder.reduce((s, b) => s + b.gewicht, 0) / ebene.bilder.length;
+}
+
+/* ================================================================
+   EBENEN-VERWALTUNG
+   ================================================================ */
+
+// Neue Ebene mit Auto-Defaults (per Rollen-Erkennung) anlegen
+function neueEbene(name) {
+  const rolle = erkenneRolle(name);
+  const defaults = ROLLEN_DEFAULTS[rolle] || ROLLEN_DEFAULTS.sonstiges;
+  return {
+    id: ++ebenenZaehler,
+    name,
+    rolle,
+    optional: false,           // Checkbox „darf fehlen"
+    groesse: defaults.groesse, // Regler: Größe %
+    posX: defaults.posX,       // Regler: Position X %
+    posY: defaults.posY,       // Regler: Position Y %
+    bilder: [],                // [{ id, name, canvas, breite, hoehe, gewicht, thumb }]
+  };
+}
+
+// Die Referenz-Figur-Ebene finden (erste Ebene mit Rolle „figur")
+function findeReferenzEbene() {
+  return ebenen.find((e) => e.rolle === "figur") || null;
+}
+
+/* ================================================================
+   BILD-UPLOAD & AUTOMATISCHER ZUSCHNITT
+   Beim Hochladen werden transparente Ränder per Alpha-Kanal-
+   Analyse (getImageData → Bounding-Box) weggeschnitten. Dadurch
+   ist die Original-Dateigröße irrelevant — nur das Motiv zählt.
+   ================================================================ */
+
+// Bild-Datei laden → HTMLImageElement
+function ladeBild(datei) {
+  return new Promise((res, rej) => {
+    const leser = new FileReader();
+    leser.onload = () => {
+      const img = new Image();
+      img.onload = () => res(img);
+      img.onerror = () => rej(new Error("Bild konnte nicht geladen werden"));
+      img.src = leser.result;
+    };
+    leser.onerror = () => rej(new Error("Datei konnte nicht gelesen werden"));
+    leser.readAsDataURL(datei);
+  });
+}
+
+// Transparente Ränder wegschneiden → zugeschnittenes Canvas
+function schneideTransparenzWeg(img) {
+  const c = document.createElement("canvas");
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+
+  const daten = ctx.getImageData(0, 0, c.width, c.height).data;
+  let minX = c.width, minY = c.height, maxX = -1, maxY = -1;
+
+  // Bounding-Box aller Pixel mit Alpha > 8 ermitteln
+  for (let y = 0; y < c.height; y++) {
+    for (let x = 0; x < c.width; x++) {
+      if (daten[(y * c.width + x) * 4 + 3] > 8) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  // Komplett transparentes Bild → unverändert zurückgeben
+  if (maxX < 0) return c;
+
+  const b = maxX - minX + 1;
+  const h = maxY - minY + 1;
+  const zugeschnitten = document.createElement("canvas");
+  zugeschnitten.width = b;
+  zugeschnitten.height = h;
+  zugeschnitten.getContext("2d").drawImage(c, minX, minY, b, h, 0, 0, b, h);
+  return zugeschnitten;
+}
+
+// Kleines Vorschaubild (Thumbnail) als Daten-URL erzeugen
+function erzeugeThumb(canvas, groesse = 120) {
+  const t = document.createElement("canvas");
+  const faktor = Math.min(groesse / canvas.width, groesse / canvas.height, 1);
+  t.width = Math.max(1, Math.round(canvas.width * faktor));
+  t.height = Math.max(1, Math.round(canvas.height * faktor));
+  t.getContext("2d").drawImage(canvas, 0, 0, t.width, t.height);
+  return t.toDataURL("image/png");
+}
+
+// Dateien einer Ebene hinzufügen (Drag & Drop oder Dateiauswahl)
+async function fuegeBilderHinzu(ebene, dateien) {
+  if (generierungLaeuft) return; // Während der Generierung gesperrt
+  const bildDateien = [...dateien].filter((d) => d.type.startsWith("image/"));
+  if (!bildDateien.length) return;
+
+  setzeStatus(`Verarbeite ${bildDateien.length} Bild(er) …`);
+  for (const datei of bildDateien) {
+    try {
+      const img = await ladeBild(datei);
+      const zugeschnitten = schneideTransparenzWeg(img);
+      ebene.bilder.push({
+        id: ++bildZaehler,
+        name: datei.name,
+        canvas: zugeschnitten,
+        breite: zugeschnitten.width,
+        hoehe: zugeschnitten.height,
+        gewicht: 50,                        // Standard-Gewicht (1–100)
+        thumb: erzeugeThumb(zugeschnitten),
+      });
+    } catch (fehler) {
+      console.warn("Bild übersprungen:", datei.name, fehler);
+    }
+    await pause(0); // UI nicht einfrieren
+  }
+  setzeStatus("");
+  zeichneEbenenListe();
+  aktualisiereKombos();
+  mischeVorschau();
+}
+
+/* ================================================================
+   RENDERING
+   Zeichnet eine Kombination (Auswahl je Ebene) auf ein Canvas.
+   Ebenen-Reihenfolge = Stapelung: Index 0 wird zuerst gezeichnet
+   (ganz hinten), die letzte Ebene zuletzt (ganz vorn).
+   ================================================================ */
+
+// Zufällige Kombination ziehen: je Ebene ein Bild-Index oder -1 (fehlt).
+// gleichverteilt=true ignoriert die Gewichte — wird als Fallback genutzt,
+// wenn extreme Gewichte die Suche nach neuen Kombinationen blockieren.
+function ziehZufallsAuswahl(gleichverteilt = false) {
+  return ebenen.map((ebene) => {
+    if (!ebene.bilder.length) return -1;
+    const optionen = ebene.bilder.map((b, i) => ({ i, gewicht: gleichverteilt ? 1 : b.gewicht }));
+    if (ebene.optional) optionen.push({ i: -1, gewicht: gleichverteilt ? 1 : durchschnittsGewicht(ebene) });
+    return gewichteteWahl(optionen);
+  });
+}
+
+// Position & Größe der Referenz-Figur auf dem Canvas berechnen.
+// Alle anderen Ebenen richten sich an dieser Box aus.
+function berechneReferenzBox(groesse, auswahl) {
+  const ref = findeReferenzEbene();
+  if (ref) {
+    const idx = auswahl[ebenen.indexOf(ref)];
+    if (idx >= 0) {
+      const bild = ref.bilder[idx];
+      const b = groesse * (ref.groesse / 100);
+      const h = b * (bild.hoehe / bild.breite);
+      return {
+        x: groesse * (ref.posX / 100) - b / 2,
+        y: groesse * (ref.posY / 100) - h / 2,
+        b, h,
+      };
+    }
+  }
+  // Keine Figur vorhanden/ausgewählt → sinnvolle Standard-Box
+  return { x: groesse * 0.1, y: groesse * 0.15, b: groesse * 0.8, h: groesse * 0.7 };
+}
+
+// Die eigentliche Zeichenfunktion
+function renderKombination(ctx, groesse, auswahl) {
+  ctx.clearRect(0, 0, groesse, groesse);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  // Referenz-Box vorab berechnen (unabhängig von der Zeichen-Reihenfolge)
+  const refBox = berechneReferenzBox(groesse, auswahl);
+  const refEbene = findeReferenzEbene();
+
+  ebenen.forEach((ebene, ei) => {
+    const idx = auswahl[ei];
+    if (idx < 0) return; // Trait fehlt oder Ebene ist leer
+    const bild = ebene.bilder[idx];
+    if (!bild) return;
+
+    if (ebene.rolle === "hintergrund") {
+      // Hintergrund: füllt die Fläche komplett (cover), Regler = Zoom/Verschiebung
+      const faktor = Math.max(groesse / bild.breite, groesse / bild.hoehe) * (ebene.groesse / 100);
+      const b = bild.breite * faktor;
+      const h = bild.hoehe * faktor;
+      ctx.drawImage(bild.canvas, groesse * (ebene.posX / 100) - b / 2, groesse * (ebene.posY / 100) - h / 2, b, h);
+    } else if (ebene === refEbene) {
+      // Referenz-Figur: Größe/Position relativ zum Canvas
+      ctx.drawImage(bild.canvas, refBox.x, refBox.y, refBox.b, refBox.h);
+    } else {
+      // Alle anderen Ebenen: relativ zur Referenz-Figur skaliert & positioniert.
+      // Ein riesiger Hut wird so automatisch passend verkleinert.
+      const b = refBox.b * (ebene.groesse / 100);
+      const h = b * (bild.hoehe / bild.breite);
+      const mitteX = refBox.x + refBox.b * (ebene.posX / 100);
+      const mitteY = refBox.y + refBox.h * (ebene.posY / 100);
+      ctx.drawImage(bild.canvas, mitteX - b / 2, mitteY - h / 2, b, h);
+    }
+  });
+}
+
+/* ================================================================
+   LIVE-VORSCHAU
+   ================================================================ */
+const vorschauCanvas = document.getElementById("vorschauCanvas");
+const vorschauCtx = vorschauCanvas.getContext("2d");
+
+function mischeVorschau() {
+  letzteAuswahl = ziehZufallsAuswahl();
+  renderVorschau();
+}
+
+function renderVorschau() {
+  const groesse = vorschauCanvas.width; // 1000×1000
+  vorschauCtx.clearRect(0, 0, groesse, groesse);
+
+  const hatBilder = ebenen.some((e) => e.bilder.length > 0);
+  if (!hatBilder || !letzteAuswahl) {
+    // Platzhalter-Text solange keine Bilder da sind
+    vorschauCtx.fillStyle = "#8d97b5";
+    vorschauCtx.font = "36px 'Segoe UI', sans-serif";
+    vorschauCtx.textAlign = "center";
+    vorschauCtx.fillText("Lade PNG-Ebenen hoch,", groesse / 2, groesse / 2 - 30);
+    vorschauCtx.fillText("um die Vorschau zu sehen 🎨", groesse / 2, groesse / 2 + 30);
+    return;
+  }
+
+  // Falls sich die Ebenen geändert haben und die Auswahl nicht mehr passt → neu mischen
+  if (letzteAuswahl.length !== ebenen.length ||
+      letzteAuswahl.some((idx, i) => idx >= ebenen[i].bilder.length)) {
+    letzteAuswahl = ziehZufallsAuswahl();
+  }
+  renderKombination(vorschauCtx, groesse, letzteAuswahl);
+}
+
+/* ================================================================
+   KOMBINATIONS-ZÄHLER
+   Produkt der Bild-Anzahlen pro Ebene (+1 wenn „darf fehlen"),
+   live aktualisiert. BigInt, weil das Produkt riesig werden kann.
+   ================================================================ */
+function moeglicheKombinationen() {
+  let produkt = 1n;
+  let hatEbene = false;
+  for (const ebene of ebenen) {
+    if (!ebene.bilder.length) continue;
+    hatEbene = true;
+    produkt *= BigInt(ebene.bilder.length + (ebene.optional ? 1 : 0));
+  }
+  return hatEbene ? produkt : 0n;
+}
+
+function aktualisiereKombos() {
+  const kombos = moeglicheKombinationen();
+  const anzahl = parseInt(document.getElementById("inpAnzahl").value, 10) || 0;
+  const info = document.getElementById("komboInfo");
+  info.innerHTML = `Mögliche einzigartige Kombinationen: <b>${kombos.toLocaleString("de-DE")}</b>`;
+  // Warnung, wenn mehr NFTs angefordert werden als Kombinationen möglich sind
+  if (kombos > 0n && BigInt(anzahl) > kombos) {
+    info.classList.add("warnung");
+    info.innerHTML += `<br>⚠️ Du forderst ${formatZahl(anzahl)} NFTs an — mehr als möglich!`;
+  } else {
+    info.classList.remove("warnung");
+  }
+  aktualisiereKosten();
+}
+
+/* ================================================================
+   UI: EBENEN-LISTE ZEICHNEN
+   ================================================================ */
+const ebenenListe = document.getElementById("ebenenListe");
+
+// Anzeigename der Rolle (für das kleine Badge)
+const ROLLEN_LABEL = {
+  hintergrund: "Hintergrund (füllt Fläche)",
+  figur: "★ Referenz-Figur",
+  hut: "Hut → oben am Kopf",
+  gesicht: "Gesicht → Kopfbereich",
+  accessoire: "Accessoire",
+  sonstiges: "Frei positioniert",
+};
+
+function zeichneEbenenListe() {
+  ebenenListe.innerHTML = "";
+
+  ebenen.forEach((ebene, index) => {
+    const karte = document.createElement("div");
+    karte.className = "ebene";
+
+    // --- Kopfzeile: Nummer, Name, Rolle, Sortier-/Lösch-Buttons ---
+    karte.innerHTML = `
+      <div class="ebene-kopf">
+        <span class="ebene-nr">${index + 1}</span>
+        <input class="ebene-name" value="${escapeHtml(ebene.name)}" title="Ebene umbenennen">
+        <span class="ebene-rolle ${ebene.rolle === "figur" ? "referenz" : ""}">${ROLLEN_LABEL[ebene.rolle]}</span>
+        <button class="btn-klein btn-hoch" title="Nach oben (weiter nach hinten)" aria-label="Ebene nach oben verschieben" ${index === 0 ? "disabled" : ""}>▲</button>
+        <button class="btn-klein btn-runter" title="Nach unten (weiter nach vorn)" aria-label="Ebene nach unten verschieben" ${index === ebenen.length - 1 ? "disabled" : ""}>▼</button>
+        <button class="btn-klein btn-loeschen btn-ebene-weg" title="Ebene löschen" aria-label="Ebene löschen">✕</button>
+      </div>
+      <div class="ebene-optionen">
+        <label><input type="checkbox" class="chk-optional" ${ebene.optional ? "checked" : ""}> darf fehlen (Trait ist bei manchen NFTs nicht vorhanden)</label>
+        <span>${ebene.bilder.length} Bild(er)</span>
+      </div>
+      <div class="regler-zeile">
+        <span>Größe %</span>
+        <input type="range" class="rg-groesse" min="5" max="200" value="${ebene.groesse}" aria-label="Größe in Prozent">
+        <output>${ebene.groesse}</output>
+      </div>
+      <div class="regler-zeile">
+        <span>Position X %</span>
+        <input type="range" class="rg-posx" min="-50" max="150" value="${ebene.posX}" aria-label="Position X in Prozent">
+        <output>${ebene.posX}</output>
+      </div>
+      <div class="regler-zeile">
+        <span>Position Y %</span>
+        <input type="range" class="rg-posy" min="-50" max="150" value="${ebene.posY}" aria-label="Position Y in Prozent">
+        <output>${ebene.posY}</output>
+      </div>
+      <div class="dropzone" tabindex="0" role="button" aria-label="Bilder hochladen: PNGs hierher ziehen, klicken oder Enter drücken">📂 PNGs hierher ziehen oder klicken (mehrere möglich)</div>
+      <input type="file" accept="image/png,image/*" multiple hidden>
+      <div class="bilder-raster"></div>
+    `;
+
+    // --- Umbenennen: Rolle neu erkennen, Defaults bei Rollenwechsel anwenden ---
+    karte.querySelector(".ebene-name").addEventListener("change", (ev) => {
+      if (generierungLaeuft) return;
+      ebene.name = ev.target.value.trim() || "Ebene";
+      const neueRolle = erkenneRolle(ebene.name);
+      if (neueRolle !== ebene.rolle) {
+        ebene.rolle = neueRolle;
+        const d = ROLLEN_DEFAULTS[neueRolle] || ROLLEN_DEFAULTS.sonstiges;
+        ebene.groesse = d.groesse;
+        ebene.posX = d.posX;
+        ebene.posY = d.posY;
+      }
+      zeichneEbenenListe();
+      renderVorschau();
+    });
+
+    // --- Sortieren (Reihenfolge = Zeichen-Stapelung) ---
+    // Die zuletzt gemischte Auswahl wird mitgetauscht, damit die Vorschau
+    // dieselbe Kombination in neuer Stapelreihenfolge zeigt.
+    karte.querySelector(".btn-hoch").addEventListener("click", () => {
+      if (generierungLaeuft) return;
+      [ebenen[index - 1], ebenen[index]] = [ebenen[index], ebenen[index - 1]];
+      if (letzteAuswahl) [letzteAuswahl[index - 1], letzteAuswahl[index]] = [letzteAuswahl[index], letzteAuswahl[index - 1]];
+      zeichneEbenenListe();
+      renderVorschau();
+    });
+    karte.querySelector(".btn-runter").addEventListener("click", () => {
+      if (generierungLaeuft) return;
+      [ebenen[index + 1], ebenen[index]] = [ebenen[index], ebenen[index + 1]];
+      if (letzteAuswahl) [letzteAuswahl[index + 1], letzteAuswahl[index]] = [letzteAuswahl[index], letzteAuswahl[index + 1]];
+      zeichneEbenenListe();
+      renderVorschau();
+    });
+
+    // --- Löschen ---
+    karte.querySelector(".btn-ebene-weg").addEventListener("click", () => {
+      if (generierungLaeuft) return;
+      if (ebene.bilder.length && !confirm(`Ebene „${ebene.name}" mit ${ebene.bilder.length} Bild(ern) wirklich löschen?`)) return;
+      ebenen.splice(index, 1);
+      if (letzteAuswahl) letzteAuswahl.splice(index, 1);
+      zeichneEbenenListe();
+      aktualisiereKombos();
+      renderVorschau();
+    });
+
+    // --- Checkbox „darf fehlen" ---
+    karte.querySelector(".chk-optional").addEventListener("change", (ev) => {
+      if (generierungLaeuft) { ev.target.checked = ebene.optional; return; }
+      ebene.optional = ev.target.checked;
+      aktualisiereKombos();
+      aktualisiereGewichtLabels(ebene, karte); // Häufigkeits-% ändern sich mit
+    });
+
+    // --- Regler: Größe / Position X / Position Y → sofort in der Vorschau ---
+    const bindeRegler = (selektor, eigenschaft) => {
+      const regler = karte.querySelector(selektor);
+      const anzeige = regler.nextElementSibling;
+      regler.addEventListener("input", () => {
+        if (generierungLaeuft) return;
+        ebene[eigenschaft] = parseInt(regler.value, 10);
+        anzeige.value = regler.value;
+        renderVorschau(); // Live-Update ohne Neuaufbau der Liste
+      });
+    };
+    bindeRegler(".rg-groesse", "groesse");
+    bindeRegler(".rg-posx", "posX");
+    bindeRegler(".rg-posy", "posY");
+
+    // --- Upload: Dropzone + Dateiauswahl ---
+    const zone = karte.querySelector(".dropzone");
+    const dateiInput = karte.querySelector("input[type=file]");
+    zone.addEventListener("click", () => dateiInput.click());
+    // Auch per Tastatur bedienbar (Enter/Leertaste öffnet die Dateiauswahl)
+    zone.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); dateiInput.click(); }
+    });
+    zone.addEventListener("dragover", (ev) => { ev.preventDefault(); zone.classList.add("aktiv"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("aktiv"));
+    zone.addEventListener("drop", (ev) => {
+      ev.preventDefault();
+      zone.classList.remove("aktiv");
+      fuegeBilderHinzu(ebene, ev.dataTransfer.files);
+    });
+    dateiInput.addEventListener("change", () => {
+      fuegeBilderHinzu(ebene, dateiInput.files);
+      dateiInput.value = "";
+    });
+
+    // --- Bild-Karten (Thumbnail, Name, Gewichts-Regler, Entfernen) ---
+    const raster = karte.querySelector(".bilder-raster");
+    ebene.bilder.forEach((bild, bi) => {
+      const bk = document.createElement("div");
+      bk.className = "bild-karte";
+      bk.innerHTML = `
+        <img src="${bild.thumb}" alt="${escapeHtml(bild.name)}">
+        <div class="bild-name" title="${escapeHtml(bild.name)}">${escapeHtml(bild.name)}</div>
+        <div class="bild-gewicht">
+          <span title="Gewicht: hoch = häufig, niedrig = selten">⚖️</span>
+          <input type="range" min="1" max="100" value="${bild.gewicht}" aria-label="Gewicht (Seltenheit): hoch = häufig, niedrig = selten">
+          <output></output>
+        </div>
+        <button class="bild-entfernen" title="Bild entfernen" aria-label="Bild entfernen">✕</button>
+      `;
+      // Gewichts-Regler (Rarity): hohes Gewicht = häufig, niedriges = selten
+      const gewichtRegler = bk.querySelector("input[type=range]");
+      gewichtRegler.addEventListener("input", () => {
+        if (generierungLaeuft) { gewichtRegler.value = bild.gewicht; return; }
+        bild.gewicht = parseInt(gewichtRegler.value, 10);
+        aktualisiereGewichtLabels(ebene, karte);
+      });
+      bk.querySelector(".bild-entfernen").addEventListener("click", () => {
+        if (generierungLaeuft) return;
+        ebene.bilder.splice(bi, 1);
+        zeichneEbenenListe();
+        aktualisiereKombos();
+        // Neu mischen, weil die alten Bild-Indizes nicht mehr stimmen
+        mischeVorschau();
+      });
+      raster.appendChild(bk);
+    });
+    aktualisiereGewichtLabels(ebene, karte);
+
+    ebenenListe.appendChild(karte);
+  });
+}
+
+// Zeigt neben jedem Gewichts-Regler die resultierende Häufigkeit in %
+function aktualisiereGewichtLabels(ebene, karte) {
+  const gesamt = ebene.bilder.reduce((s, b) => s + b.gewicht, 0) +
+                 (ebene.optional ? durchschnittsGewicht(ebene) : 0);
+  karte.querySelectorAll(".bild-gewicht").forEach((zeile, i) => {
+    const bild = ebene.bilder[i];
+    const prozent = gesamt > 0 ? ((bild.gewicht / gesamt) * 100).toFixed(1) : "0";
+    zeile.querySelector("output").value = `${bild.gewicht} · ${prozent}%`;
+  });
+}
+
+/* ================================================================
+   SOLANA / WALLET (Phantom) + TOKEN-BURN
+   ================================================================ */
+
+// Phantom-Provider finden
+function holePhantom() {
+  if (window.phantom?.solana?.isPhantom) return window.phantom.solana;
+  if (window.solana?.isPhantom) return window.solana;
+  return null;
+}
+
+// RPC-Verbindung (einmalig erzeugt)
+function holeVerbindung() {
+  if (!wallet.verbindung) {
+    wallet.verbindung = new solanaWeb3.Connection(CONFIG.RPC_ENDPOINT, "confirmed");
+  }
+  return wallet.verbindung;
+}
+
+// Associated Token Account (ATA) des Nutzers für den Token ermitteln
+function ermittleAta(besitzer, mint) {
+  const tokenProgramm = new solanaWeb3.PublicKey(TOKEN_PROGRAMM_ID);
+  const ataProgramm = new solanaWeb3.PublicKey(ATA_PROGRAMM_ID);
+  const [ata] = solanaWeb3.PublicKey.findProgramAddressSync(
+    [besitzer.toBuffer(), tokenProgramm.toBuffer(), mint.toBuffer()],
+    ataProgramm
+  );
+  return ata;
+}
+
+// Wallet verbinden / trennen
+async function walletUmschalten() {
+  const btn = document.getElementById("btnWallet");
+  if (wallet.pubkey) {
+    // Trennen
+    try { await wallet.provider.disconnect(); } catch (_) { /* ignorieren */ }
+    wallet.pubkey = null;
+    wallet.guthaben = null;
+    btn.textContent = "Wallet verbinden";
+    document.getElementById("walletInfo").textContent = "Wallet nicht verbunden";
+    aktualisiereKosten();
+    return;
+  }
+
+  if (typeof solanaWeb3 === "undefined") {
+    alert("Die Solana-Bibliothek konnte nicht geladen werden.\nBitte einmal mit Internetverbindung öffnen.");
+    return;
+  }
+  const provider = holePhantom();
+  if (!provider) {
+    alert("Phantom-Wallet nicht gefunden!\n\n• Installiere die Phantom-Browsererweiterung (phantom.app)\n• Wird die Datei per Doppelklick (file://) geöffnet, muss in den Erweiterungs-Einstellungen „Zugriff auf Datei-URLs“ erlaubt sein.");
+    return;
+  }
+
+  try {
+    const antwort = await provider.connect();
+    wallet.provider = provider;
+    wallet.pubkey = antwort.publicKey;
+    btn.textContent = "Trennen";
+    const adresse = wallet.pubkey.toBase58();
+    document.getElementById("walletInfo").innerHTML =
+      `<span class="wallet-adresse">${escapeHtml(adresse.slice(0, 4))}…${escapeHtml(adresse.slice(-4))}</span><br>Guthaben wird geladen …`;
+    await aktualisiereGuthaben();
+  } catch (fehler) {
+    console.warn("Wallet-Verbindung abgelehnt:", fehler);
+    setzeStatus("Wallet-Verbindung abgebrochen.", "fehler");
+  }
+}
+
+// Token-Guthaben des Nutzers anzeigen (getTokenAccountBalance auf dem ATA)
+async function aktualisiereGuthaben() {
+  if (!wallet.pubkey) return;
+  const info = document.getElementById("walletInfo");
+  const adresse = wallet.pubkey.toBase58();
+  const kurz = `<span class="wallet-adresse">${escapeHtml(adresse.slice(0, 4))}…${escapeHtml(adresse.slice(-4))}</span>`;
+
+  if (TEST_MODUS) {
+    info.innerHTML = `${kurz}<br>Test-Modus: kein Token nötig`;
+    return;
+  }
+  try {
+    const verbindung = holeVerbindung();
+    const mint = new solanaWeb3.PublicKey(CONFIG.TOKEN_MINT);
+    const ata = ermittleAta(wallet.pubkey, mint);
+    const saldo = await verbindung.getTokenAccountBalance(ata);
+    // Number() erzwingen: RPC-Antworten nie ungeprüft ins HTML lassen
+    wallet.guthaben = Number(saldo.value.uiAmount) || 0;
+    info.innerHTML = `${kurz}<br>Guthaben: <b>${formatZahl(wallet.guthaben)}</b> Token`;
+  } catch (fehler) {
+    // Kein Token-Konto vorhanden → Guthaben 0
+    wallet.guthaben = 0;
+    info.innerHTML = `${kurz}<br>Guthaben: <b>0</b> Token`;
+  }
+  aktualisiereKosten();
+}
+
+/**
+ * Burnt die Kosten (PRICE_PER_NFT × Anzahl) direkt aus der Wallet des
+ * Nutzers — per manuell gebauter SPL-Burn-Instruktion (Index 8):
+ *   Accounts: [ATA (writable), Mint (writable), Owner (signer)]
+ *   Data:     [8, u64-Menge little-endian]
+ * Rückgabe: true bei bestätigter Transaktion, sonst false.
+ */
+async function fuehreBurnDurch(anzahlNfts) {
+  const verbindung = holeVerbindung();
+  const mint = new solanaWeb3.PublicKey(CONFIG.TOKEN_MINT);
+  const besitzer = wallet.pubkey;
+  const ata = ermittleAta(besitzer, mint);
+
+  // Menge in Roh-Einheiten (BigInt, um Rundungsfehler zu vermeiden)
+  const rohProNft = BigInt(Math.round(CONFIG.PRICE_PER_NFT * 10 ** CONFIG.TOKEN_DECIMALS));
+  const menge = rohProNft * BigInt(anzahlNfts);
+
+  // Instruktions-Daten: 1 Byte Instruktions-Index (8 = Burn) + u64 little-endian
+  const daten = new Uint8Array(9);
+  daten[0] = 8;
+  let rest = menge;
+  for (let i = 0; i < 8; i++) {
+    daten[1 + i] = Number(rest & 0xffn);
+    rest >>= 8n;
+  }
+
+  const burnInstruktion = new solanaWeb3.TransactionInstruction({
+    programId: new solanaWeb3.PublicKey(TOKEN_PROGRAMM_ID),
+    keys: [
+      { pubkey: ata,      isSigner: false, isWritable: true },  // Token-Konto des Nutzers
+      { pubkey: mint,     isSigner: false, isWritable: true },  // Token-Mint
+      { pubkey: besitzer, isSigner: true,  isWritable: false }, // Besitzer (unterschreibt)
+    ],
+    data: daten,
+  });
+
+  setzeStatus(`Burne ${formatZahl(CONFIG.PRICE_PER_NFT * anzahlNfts)} Token … bitte in Phantom bestätigen.`);
+
+  let signature = null; // Merken, damit wir nach Netzwerkfehlern nachprüfen können
+  try {
+    const blockInfo = await verbindung.getLatestBlockhash("confirmed");
+    const tx = new solanaWeb3.Transaction().add(burnInstruktion);
+    tx.feePayer = besitzer;
+    tx.recentBlockhash = blockInfo.blockhash;
+
+    // Phantom signiert & sendet die Transaktion
+    ({ signature } = await wallet.provider.signAndSendTransaction(tx));
+    setzeStatus("Warte auf Bestätigung der Burn-Transaktion …");
+
+    const ergebnis = await verbindung.confirmTransaction({
+      signature,
+      blockhash: blockInfo.blockhash,
+      lastValidBlockHeight: blockInfo.lastValidBlockHeight,
+    }, "confirmed");
+
+    if (ergebnis.value.err) {
+      setzeStatus("Burn-Transaktion fehlgeschlagen: " + JSON.stringify(ergebnis.value.err), "fehler");
+      return false;
+    }
+    setzeStatus("✅ Burn bestätigt! Signatur: " + signature.slice(0, 16) + "…", "erfolg");
+    aktualisiereGuthaben(); // Guthaben im Hintergrund aktualisieren
+    return true;
+  } catch (fehler) {
+    // Abbruch durch Nutzer oder Netzwerkfehler sauber abfangen
+    const meldung = String(fehler?.message || fehler);
+    if (fehler?.code === 4001 || /reject|abgelehnt|cancel/i.test(meldung)) {
+      setzeStatus("Transaktion abgebrochen — Generierung nicht gestartet.", "fehler");
+      return false;
+    }
+    // WICHTIG: Wenn die Transaktion bereits gesendet wurde, kann sie trotz
+    // Bestätigungs-Fehler (Timeout, RPC-Aussetzer) on-chain gelandet sein.
+    // Dann wären Tokens geburnt, ohne dass NFTs generiert würden!
+    // → Signatur-Status direkt nachprüfen, bevor wir aufgeben.
+    if (signature) {
+      setzeStatus("Bestätigung unklar — prüfe Transaktions-Status nach …");
+      try {
+        await pause(2000);
+        const status = await verbindung.getSignatureStatus(signature, { searchTransactionHistory: true });
+        const stufe = status?.value?.confirmationStatus;
+        if (!status?.value?.err && (stufe === "confirmed" || stufe === "finalized")) {
+          setzeStatus("✅ Burn bestätigt (per Status-Nachprüfung)! Signatur: " + signature.slice(0, 16) + "…", "erfolg");
+          aktualisiereGuthaben();
+          return true;
+        }
+      } catch (_) { /* Nachprüfung fehlgeschlagen → unten melden */ }
+      setzeStatus(`Bestätigung fehlgeschlagen (${meldung}). Bitte Signatur ${signature} im Solana-Explorer prüfen, bevor du erneut startest — der Burn könnte trotzdem durchgegangen sein!`, "fehler");
+      return false;
+    }
+    setzeStatus("Fehler bei der Burn-Transaktion: " + meldung, "fehler");
+    return false;
+  }
+}
+
+/* ================================================================
+   KOSTEN-ANZEIGE
+   ================================================================ */
+function aktualisiereKosten() {
+  const anzahl = parseInt(document.getElementById("inpAnzahl").value, 10) || 0;
+  const kosten = CONFIG.PRICE_PER_NFT * anzahl;
+  const box = document.getElementById("kostenBox");
+  if (TEST_MODUS) {
+    box.innerHTML = `🧪 Test-Modus: Generierung ist <b>kostenlos</b> (regulär ${formatZahl(kosten)} Token für ${formatZahl(anzahl)} NFTs).`;
+  } else {
+    let text = `🔥 Kosten: <b>${formatZahl(kosten)} Token</b> (${formatZahl(CONFIG.PRICE_PER_NFT)} × ${formatZahl(anzahl)} NFTs) — wird beim Start unwiderruflich geburnt.`;
+    if (wallet.guthaben !== null && wallet.guthaben < kosten) {
+      text += ` <span style="color:var(--danger)">Guthaben reicht nicht (${formatZahl(wallet.guthaben)} Token)!</span>`;
+    }
+    box.innerHTML = text;
+  }
+}
+
+/* ================================================================
+   GENERIERUNG & ZIP-EXPORT
+   ================================================================ */
+const fortschrittBalken = document.getElementById("fortschrittBalken");
+const statusText = document.getElementById("statusText");
+
+function setzeStatus(text, art = "") {
+  statusText.textContent = text;
+  statusText.className = "status-text" + (art ? " " + art : "");
+}
+
+function setzeFortschritt(prozent) {
+  fortschrittBalken.style.width = Math.max(0, Math.min(100, prozent)) + "%";
+}
+
+// Metadaten für ein NFT bauen (ERC-721 oder Solana/Metaplex)
+function baueMetadaten(nr, auswahl, einstellungen) {
+  // attributes: trait_type = Ebenen-Name, value = Bild-Dateiname („Keins" wenn Trait fehlt)
+  const attribute = [];
+  ebenen.forEach((ebene, ei) => {
+    if (!ebene.bilder.length) return;
+    const idx = auswahl[ei];
+    attribute.push({
+      trait_type: ebene.name,
+      value: idx >= 0 ? ohneEndung(ebene.bilder[idx].name) : "Keins",
+    });
+  });
+
+  const meta = {
+    name: `${einstellungen.name} #${nr}`,
+    description: einstellungen.beschreibung,
+    image: `ipfs://DEIN_CID_HIER/${nr}.png`, // Platzhalter — nach IPFS-Upload ersetzen
+    edition: nr,
+    attributes: attribute,
+  };
+
+  // Optional: Solana/Metaplex-Format für LaunchMyNFT, Candy Machine usw.
+  if (einstellungen.metaplex) {
+    meta.symbol = einstellungen.symbol;
+    meta.seller_fee_basis_points = einstellungen.royaltyBp;
+    meta.image = `${nr}.png`; // Launchpads verlinken die Datei relativ
+    meta.properties = {
+      files: [{ uri: `${nr}.png`, type: "image/png" }],
+      category: "image",
+    };
+  }
+  return meta;
+}
+
+// Alle Kombinationen systematisch aufzählen (Fallback, falls die
+// Zufallsziehung wegen fast ausgeschöpftem Kombinationsraum festhängt)
+function alleKombinationen() {
+  const optionenJeEbene = ebenen.map((ebene) => {
+    if (!ebene.bilder.length) return [-1];
+    const liste = ebene.bilder.map((_, i) => i);
+    if (ebene.optional) liste.push(-1);
+    return liste;
+  });
+  let ergebnis = [[]];
+  for (const optionen of optionenJeEbene) {
+    const neu = [];
+    for (const teil of ergebnis) {
+      for (const o of optionen) neu.push([...teil, o]);
+    }
+    ergebnis = neu;
+  }
+  return ergebnis;
+}
+
+// Fisher-Yates-Mischung (für den Aufzählungs-Fallback)
+function mischeArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// Hauptfunktion: validieren → (Burn) → generieren → ZIP exportieren
+async function starteGenerierung() {
+  if (generierungLaeuft) return;
+  setzeFortschritt(0); // Balken eines früheren Laufs zurücksetzen
+
+  // ---------- Eingaben lesen & validieren ----------
+  const name = document.getElementById("inpName").value.trim() || "Meine Kollektion";
+  const beschreibung = document.getElementById("inpBeschreibung").value.trim();
+  const anzahl = Math.round(Number(document.getElementById("inpAnzahl").value));
+  const groesse = Math.round(Number(document.getElementById("inpGroesse").value));
+  const metaplex = document.getElementById("chkMetaplex").checked;
+  const symbol = document.getElementById("inpSymbol").value.trim() || "NFT";
+  const royaltyBp = Math.round((Number(document.getElementById("inpRoyalty").value) || 0) * 100);
+
+  if (!Number.isFinite(anzahl) || anzahl < 1 || anzahl > 5000) {
+    setzeStatus("Bitte eine Anzahl zwischen 1 und 5000 angeben.", "fehler");
+    return;
+  }
+  if (!Number.isFinite(groesse) || groesse < 200 || groesse > 2000) {
+    setzeStatus("Bitte eine Bildgröße zwischen 200 und 2000 px angeben.", "fehler");
+    return;
+  }
+  const kombos = moeglicheKombinationen();
+  if (kombos === 0n) {
+    setzeStatus("Bitte zuerst mindestens ein Bild in eine Ebene hochladen.", "fehler");
+    return;
+  }
+  if (BigInt(anzahl) > kombos) {
+    setzeStatus(`⚠️ Nur ${kombos.toLocaleString("de-DE")} einzigartige Kombinationen möglich — bitte Anzahl verringern oder mehr Bilder hochladen.`, "fehler");
+    return;
+  }
+  if (typeof JSZip === "undefined") {
+    setzeStatus("JSZip konnte nicht geladen werden — bitte die Seite einmal mit Internetverbindung öffnen.", "fehler");
+    return;
+  }
+
+  // ---------- Token-Gating: ohne bestätigten Burn keine Generierung ----------
+  if (!TEST_MODUS) {
+    if (!wallet.pubkey) {
+      setzeStatus("Bitte zuerst die Wallet verbinden (Button oben rechts).", "fehler");
+      return;
+    }
+    const kosten = CONFIG.PRICE_PER_NFT * anzahl;
+    if (wallet.guthaben !== null && wallet.guthaben < kosten) {
+      setzeStatus(`Guthaben reicht nicht: ${formatZahl(kosten)} Token nötig, ${formatZahl(wallet.guthaben)} vorhanden.`, "fehler");
+      return;
+    }
+    if (!confirm(`⚠️ Es werden jetzt ${formatZahl(kosten)} Token UNWIDERRUFLICH geburnt.\n\nFortfahren?`)) {
+      setzeStatus("Abgebrochen — es wurde nichts geburnt.");
+      return;
+    }
+  }
+
+  generierungLaeuft = true;
+  document.body.classList.add("laeuft"); // Ebenen-Bearbeitung sperren
+  const btn = document.getElementById("btnGenerieren");
+  btn.disabled = true;
+  document.getElementById("btnDownload").style.display = "none";
+  if (letzteZipUrl) { URL.revokeObjectURL(letzteZipUrl); letzteZipUrl = null; }
+
+  try {
+    // Burn ausführen (erst NACH allen Validierungen, damit kein Token
+    // verbrannt wird, wenn die Generierung gar nicht starten könnte)
+    if (!TEST_MODUS) {
+      const ok = await fuehreBurnDurch(anzahl);
+      if (!ok) return; // Fehlermeldung wurde bereits gesetzt
+    }
+
+    // ---------- NFTs generieren ----------
+    setzeStatus("Generiere NFTs …");
+    setzeFortschritt(0);
+    const nftRaster = document.getElementById("nftRaster");
+    nftRaster.innerHTML = "";
+
+    const zip = new JSZip();
+    const ordnerBilder = zip.folder("bilder");
+    const ordnerMeta = zip.folder("metadaten");
+    const einstellungen = { name, beschreibung, metaplex, symbol, royaltyBp };
+
+    // Wiederverwendbares Render-Canvas in Zielgröße
+    const arbeitsCanvas = document.createElement("canvas");
+    arbeitsCanvas.width = groesse;
+    arbeitsCanvas.height = groesse;
+    const arbeitsCtx = arbeitsCanvas.getContext("2d");
+
+    // DNA-Verwaltung: jede Kombination nur einmal (Set verhindert Duplikate)
+    const benutzteDna = new Set();
+    let aufzaehlung = null; // Fallback-Liste, wird nur bei Bedarf erzeugt
+    const MAX_VERSUCHE = 3000;
+
+    for (let nr = 1; nr <= anzahl; nr++) {
+      // Einzigartige DNA (Index-Kombination) ziehen — erst gewichtet,
+      // dann notfalls gleichverteilt (hilft bei extrem seltenen Traits)
+      let auswahl = null;
+      for (let versuch = 0; versuch < MAX_VERSUCHE * 2 && !auswahl; versuch++) {
+        const kandidat = ziehZufallsAuswahl(versuch >= MAX_VERSUCHE);
+        const dna = kandidat.join("-");
+        if (!benutzteDna.has(dna)) {
+          benutzteDna.add(dna);
+          auswahl = kandidat;
+        }
+      }
+      // Fallback: Kombinationsraum fast ausgeschöpft → systematisch auffüllen
+      if (!auswahl) {
+        if (!aufzaehlung && kombos <= 200000n) {
+          setzeStatus("Kombinationsraum fast voll — fülle systematisch auf …");
+          aufzaehlung = mischeArray(alleKombinationen());
+          await pause(0);
+        }
+        if (aufzaehlung) {
+          auswahl = aufzaehlung.find((k) => !benutzteDna.has(k.join("-"))) || null;
+          if (auswahl) benutzteDna.add(auswahl.join("-"));
+        }
+        if (!auswahl) {
+          setzeStatus(`Konnte nach NFT ${nr - 1} keine weitere einzigartige Kombination finden — Export enthält ${nr - 1} NFTs.`, "fehler");
+          break;
+        }
+      }
+
+      // Rendern → PNG-Blob → ins ZIP
+      renderKombination(arbeitsCtx, groesse, auswahl);
+      const blob = await canvasZuBlob(arbeitsCanvas);
+      ordnerBilder.file(`${nr}.png`, blob);
+      ordnerMeta.file(`${nr}.json`, JSON.stringify(baueMetadaten(nr, auswahl, einstellungen), null, 2));
+
+      // Vorschau-Raster: die ersten 60 NFTs als kleine Thumbnails
+      if (nr <= 60) {
+        const zelle = document.createElement("div");
+        const thumb = document.createElement("canvas");
+        thumb.width = 140; thumb.height = 140;
+        thumb.getContext("2d").drawImage(arbeitsCanvas, 0, 0, 140, 140);
+        zelle.innerHTML = `<img src="${thumb.toDataURL("image/png")}" alt="NFT ${nr}"><div class="nft-nr">#${nr}</div>`;
+        nftRaster.appendChild(zelle);
+      }
+
+      // Fortschritt: Rendern belegt 0–75 % des Balkens
+      setzeFortschritt((nr / anzahl) * 75);
+      setzeStatus(`Generiere NFT ${formatZahl(nr)} von ${formatZahl(anzahl)} …`);
+      await pause(0); // UI nicht einfrieren
+    }
+
+    // ---------- ZIP packen (75–100 % des Balkens) ----------
+    setzeStatus("Packe ZIP-Datei …");
+    const zipBlob = await zip.generateAsync(
+      { type: "blob", streamFiles: true },
+      (meta) => {
+        setzeFortschritt(75 + meta.percent * 0.25);
+        setzeStatus(`Packe ZIP-Datei … ${meta.percent.toFixed(0)} %`);
+      }
+    );
+
+    // ---------- Download anbieten ----------
+    letzteZipUrl = URL.createObjectURL(zipBlob);
+    const dateiname = `${sicherDateiname(name)}.zip`;
+    const link = document.createElement("a");
+    link.href = letzteZipUrl;
+    link.download = dateiname;
+    link.click();
+
+    const btnDownload = document.getElementById("btnDownload");
+    btnDownload.style.display = "block";
+    btnDownload.onclick = () => {
+      const l = document.createElement("a");
+      l.href = letzteZipUrl;
+      l.download = dateiname;
+      l.click();
+    };
+
+    setzeFortschritt(100);
+    setzeStatus(`✅ Fertig! ${formatZahl(benutzteDna.size)} NFTs generiert und als „${dateiname}" exportiert.`, "erfolg");
+  } catch (fehler) {
+    console.error(fehler);
+    setzeStatus("Fehler bei der Generierung: " + String(fehler?.message || fehler), "fehler");
+  } finally {
+    generierungLaeuft = false;
+    document.body.classList.remove("laeuft");
+    btn.disabled = false;
+  }
+}
+
+/* ================================================================
+   INITIALISIERUNG
+   ================================================================ */
+function init() {
+  // Schutz: Datei-Drop außerhalb einer Dropzone würde die Seite ersetzen
+  // und damit die ganze Arbeit zerstören → global verhindern
+  document.addEventListener("dragover", (ev) => ev.preventDefault());
+  document.addEventListener("drop", (ev) => ev.preventDefault());
+
+  // Standard-Ebenen beim Start (Reihenfolge = Stapelung von hinten nach vorn)
+  ebenen = [
+    neueEbene("Hintergrund"),
+    neueEbene("Männchen"),
+    neueEbene("Gesicht/Grimasse"),
+    neueEbene("Hut"),
+  ];
+
+  // Test-Modus-Banner anzeigen
+  if (TEST_MODUS) document.getElementById("testBanner").classList.add("sichtbar");
+
+  // Buttons & Eingaben verdrahten
+  document.getElementById("btnNeueEbene").addEventListener("click", () => {
+    if (generierungLaeuft) return;
+    ebenen.push(neueEbene("Neue Ebene"));
+    zeichneEbenenListe();
+    aktualisiereKombos();
+  });
+  document.getElementById("btnMischen").addEventListener("click", mischeVorschau);
+  document.getElementById("btnGenerieren").addEventListener("click", starteGenerierung);
+  document.getElementById("btnWallet").addEventListener("click", walletUmschalten);
+  document.getElementById("inpAnzahl").addEventListener("input", aktualisiereKombos);
+  document.getElementById("chkMetaplex").addEventListener("change", (ev) => {
+    document.getElementById("metaplexFelder").style.display = ev.target.checked ? "grid" : "none";
+  });
+
+  zeichneEbenenListe();
+  aktualisiereKombos();
+  renderVorschau();
+}
+
+init();
+</script>
+</body>
+</html>
